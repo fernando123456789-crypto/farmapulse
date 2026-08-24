@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}FarmaPulse - Inicio{% endblock %}
+
+{% block content %}
+
+<!-- ===================== NAVBAR ===================== -->
+<header class="bg-fpDark relative overflow-hidden">
+  <div class="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_20%_20%,#ffffff_1px,transparent_1px)] [background-size:22px_22px] pointer-events-none"></div>
+
+  <nav class="relative max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <a href="/" class="flex items-center gap-3">
+      <div class="w-11 h-11 bg-white rounded-xl flex items-center justify-center shadow">
+        <i class="fa-solid fa-plus text-fpGreen text-2xl"></i>
+      </div>
+      <span class="text-white font-extrabold text-xl tracking-tight leading-tight">
+        Farma<span class="text-fpGreen">Pulse</span>
+      </span>
+    </a>
+
+    <ul class="hidden md:flex items-center gap-10 text-slate-200 font-medium">
+      <li><a href="/" class="hover:text-fpGreen transition">Inicio</a></li>
+      <li><a href="/comparador" class="hover:text-fpGreen transition flex items-center gap-2">
+          Servicios <i class="fa-solid fa-kit-medical text-fpGreen"></i></a></li>
+      <li><a href="#contacto" class="hover:text-fpGreen transition">Contacto</a></li>
+    </ul>
+
+    <div class="hidden md:flex items-center gap-5">
+      {% include "_auth_navbar.html" %}
+    </div>
+
+    <a href="tel:963119803" class="hidden sm:flex items-center gap-3 bg-white rounded-full pl-4 pr-5 py-2 shadow-lg">
+      <span class="w-8 h-8 rounded-full bg-fpMint flex items-center justify-center">
+        <i class="fa-solid fa-plus text-fpGreen"></i>
+      </span>
+      <span class="leading-tight">
+        <span class="block text-fpDark font-bold text-sm">963119803</span>
+        <span class="block text-slate-500 text-xs">24/7 Servicio Delivery</span>
+      </span>
+    </a>
+  </nav>
+
+  <!-- ===================== HERO ===================== -->
+  <section class="relative max-w-7xl mx-auto px-6 pt-8 pb-0 grid md:grid-cols-2 gap-10 items-end">
+    <div class="text-white pb-16">
+      <h1 class="text-4xl md:text-5xl font-extrabold leading-tight mb-6">
+        Tu Red Compartida<br>
+        para Medicamentos<br>
+        de Confianza
+      </h1>
+      <p class="text-slate-300 max-w-md mb-8 leading-relaxed">
+        Farmacia FarmaPulse: tu recurso confiable para una red compartida de
+        medicamentos, facilitando el acceso a tratamientos vitales y cuidando
+        de ti y de tu familia.
+      </p>
+
+      <a href="/comparador"
+         class="inline-flex items-center gap-3 bg-fpGreen hover:bg-fpGreenDark transition rounded-full px-7 py-4 font-semibold shadow-xl shadow-fpGreen/20">
+        COTIZAR Y VER MEDICAMENTOS DE FARMACIAS
+        <i class="fa-solid fa-arrow-up-right-from-square"></i>
+      </a>
+
+      <div class="flex items-center gap-3 mt-8">
+        <div class="flex -space-x-3">
+          <img class="w-9 h-9 rounded-full border-2 border-fpDark object-cover" src="https://i.pravatar.cc/60?img=32" alt="usuario">
+          <img class="w-9 h-9 rounded-full border-2 border-fpDark object-cover" src="https://i.pravatar.cc/60?img=45" alt="usuario">
+          <img class="w-9 h-9 rounded-full border-2 border-fpDark object-cover" src="https://i.pravatar.cc/60?img=12" alt="usuario">
+        </div>
+        <p class="text-sm text-slate-300 leading-tight">
+          MÁS DE 150K PERSONAS<br>CONFÍAN EN NOSOTROS
+        </p>
+      </div>
+    </div>
+
+    <div class="relative flex justify-center md:justify-end">
+      <div class="absolute w-80 h-80 md:w-96 md:h-96 rounded-full bg-fpGreen/20 blur-3xl"></div>
+      <div class="relative w-72 h-72 md:w-96 md:h-96 rounded-full bg-gradient-to-b from-fpMint/20 to-fpGreen/10 flex items-end justify-center overflow-hidden">
+        <i class="fa-solid fa-plus absolute top-6 left-10 text-fpGreen/30 text-3xl"></i>
+        <i class="fa-solid fa-plus absolute bottom-24 right-6 text-fpGreen/20 text-5xl"></i>
+        <img src="https://images.unsplash.com/photo-1559839734-2b71ea197ec2?q=80&w=600&auto=format&fit=crop"
+             alt="Profesional de la salud"
+             class="h-full object-cover object-top rounded-t-full">
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== BANNER FARMACIAS ===================== -->
+  <div class="relative mt-10 bg-gradient-to-r from-fpDark2 to-[#0a2c3a]">
+    <div class="max-w-7xl mx-auto px-6 py-8 grid grid-cols-2 md:grid-cols-6 gap-6 text-center">
+      <div class="text-white font-bold text-lg opacity-90">Inkafarma</div>
+      <div class="text-white font-bold text-lg opacity-90">Mifarma</div>
+      <div class="text-white font-bold text-lg opacity-90">Boticas y<br>Salud</div>
+      <div class="text-white font-bold text-lg opacity-90">Farmacia<br>Arcángel</div>
+      <div class="text-white font-bold text-lg opacity-90">Boticas<br>Fasa</div>
+      <div class="text-white font-bold text-lg opacity-90">Farmacias<br>Felicidad</div>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== SERVICIOS ===================== -->
+<section id="servicios" class="max-w-7xl mx-auto px-6 py-20 grid md:grid-cols-3 gap-8">
+  <div class="rounded-2xl border border-slate-100 shadow-sm p-8 hover:shadow-lg transition">
+    <div class="w-12 h-12 rounded-xl bg-fpMint flex items-center justify-center mb-5">
+      <i class="fa-solid fa-magnifying-glass-dollar text-fpGreen text-xl"></i>
+    </div>
+    <h3 class="font-bold text-lg mb-2">Compara Precios</h3>
+    <p class="text-slate-500 text-sm leading-relaxed">
+      Consulta en tiempo real el precio de tus medicamentos en las principales
+      cadenas y boticas locales del Perú.
+    </p>
+  </div>
+  <div class="rounded-2xl border border-slate-100 shadow-sm p-8 hover:shadow-lg transition">
+    <div class="w-12 h-12 rounded-xl bg-fpMint flex items-center justify-center mb-5">
+      <i class="fa-solid fa-truck-medical text-fpGreen text-xl"></i>
+    </div>
+    <h3 class="font-bold text-lg mb-2">Delivery 24/7</h3>
+    <p class="text-slate-500 text-sm leading-relaxed">
+      Coordina la entrega de tus medicamentos las 24 horas del día, los 7 días
+      de la semana.
+    </p>
+  </div>
+  <div class="rounded-2xl border border-slate-100 shadow-sm p-8 hover:shadow-lg transition">
+    <div class="w-12 h-12 rounded-xl bg-fpMint flex items-center justify-center mb-5">
+      <i class="fa-solid fa-list-check text-fpGreen text-xl"></i>
+    </div>
+    <h3 class="font-bold text-lg mb-2">Mi Receta</h3>
+    <p class="text-slate-500 text-sm leading-relaxed">
+      Guarda tu lista de medicamentos favoritos y accede a tu historial de
+      búsquedas en cualquier momento.
+    </p>
+  </div>
+</section>
+
+<!-- ===================== CONTACTO ===================== -->
+<section id="contacto" class="bg-fpMint">
+  <div class="max-w-7xl mx-auto px-6 py-16 flex flex-col md:flex-row items-center justify-between gap-8">
+    <div>
+      <h2 class="text-2xl font-extrabold text-fpDark mb-2">¿Necesitas ayuda con tu tratamiento?</h2>
+      <p class="text-slate-600">Nuestro equipo está disponible para orientarte en la búsqueda de tus medicamentos.</p>
+    </div>
+    <a href="tel:963119803" class="inline-flex items-center gap-3 bg-fpGreen hover:bg-fpGreenDark transition text-white rounded-full px-7 py-4 font-semibold shadow-lg">
+      <i class="fa-solid fa-phone"></i> Llamar al 963119803
+    </a>
+  </div>
+</section>
+
+{% endblock %}

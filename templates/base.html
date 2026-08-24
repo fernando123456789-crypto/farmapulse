@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}FarmaPulse - Tu Red Compartida para Medicamentos de Confianza{% endblock %}</title>
+<meta name="description" content="FarmaPulse: compara precios de medicamentos en farmacias del Perú y ahorra en tus tratamientos.">
+
+<!-- Tailwind CSS (CDN) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          fpDark: '#0d3b4f',
+          fpDark2: '#12495f',
+          fpGreen: '#1fa971',
+          fpGreenDark: '#158a5a',
+          fpMint: '#e7f6ef',
+        }
+      }
+    }
+  }
+</script>
+
+<!-- FontAwesome (CDN) -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+<!-- Google Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+{% block extra_head %}{% endblock %}
+</head>
+<body class="font-[Poppins] bg-white text-slate-800">
+
+{% block content %}{% endblock %}
+
+<footer class="bg-fpDark text-slate-200 mt-16">
+  <div class="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4">
+    <div class="flex items-center gap-2">
+      <i class="fa-solid fa-plus-square text-fpGreen text-xl"></i>
+      <span class="font-bold text-white">FarmaPulse</span>
+    </div>
+    <p class="text-sm text-slate-400 text-center">
+      &copy; 2026 FarmaPulse. Los precios mostrados son referenciales y pueden variar según disponibilidad.
+    </p>
+    <div class="flex gap-4 text-lg">
+      <i class="fa-brands fa-facebook hover:text-fpGreen cursor-pointer"></i>
+      <i class="fa-brands fa-instagram hover:text-fpGreen cursor-pointer"></i>
+      <i class="fa-brands fa-whatsapp hover:text-fpGreen cursor-pointer"></i>
+    </div>
+  </div>
+</footer>
+
+{% include "_auth_modales.html" %}
+
+<!-- Botón flotante de WhatsApp (se arma en JS con /api/config) -->
+<div id="botonWhatsapp"></div>
+
+{% block extra_scripts %}{% endblock %}
+<script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+<script src="{{ url_for('static', filename='js/whatsapp.js') }}"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

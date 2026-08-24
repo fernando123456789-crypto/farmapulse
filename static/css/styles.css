@@ -1,0 +1,140 @@
+/* =========================================================
+   FarmaPulse - Estilos personalizados
+   ========================================================= */
+
+* {
+  scroll-behavior: smooth;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Animaciones ---------- */
+@keyframes fpFadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.fp-fade-in {
+  animation: fpFadeInUp 0.35s ease-out both;
+}
+
+@keyframes fpPulseSoft {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(31, 169, 113, 0.35); }
+  50%      { box-shadow: 0 0 0 8px rgba(31, 169, 113, 0); }
+}
+
+.fp-pulse {
+  animation: fpPulseSoft 2s infinite;
+}
+
+/* ---------- Badges de tipo de medicamento ---------- */
+.badge-generico {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: #e7f6ef;
+  color: #158a5a;
+  font-weight: 700;
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+
+.badge-marca {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: #e6f0fb;
+  color: #1d5fb8;
+  font-weight: 700;
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+
+/* ---------- Precio destacado ---------- */
+.precio-destacado {
+  color: #158a5a;
+  font-weight: 800;
+}
+
+/* ---------- Fila con mejor precio ---------- */
+.fila-mejor-precio {
+  background-color: #f3fbf7;
+}
+
+/* ---------- Scrollbar tabla (estético) ---------- */
+.overflow-x-auto::-webkit-scrollbar {
+  height: 8px;
+}
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background-color: #d7e4e0;
+  border-radius: 999px;
+}
+
+/* ---------- Botones de acción en tabla ---------- */
+.btn-accion {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  transition: all 0.15s ease-in-out;
+  white-space: nowrap;
+}
+
+.btn-agregar {
+  background-color: #0d3b4f;
+  color: #fff;
+}
+.btn-agregar:hover {
+  background-color: #12495f;
+}
+
+.btn-comprar {
+  background-color: #1fa971;
+  color: #fff;
+}
+.btn-comprar:hover {
+  background-color: #158a5a;
+}
+
+.btn-quitar {
+  background-color: #fdecec;
+  color: #c0392b;
+}
+.btn-quitar:hover {
+  background-color: #fbd8d8;
+}
+
+.btn-quitar-carrito {
+  color: #c0392b;
+  background: transparent;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: background-color 0.15s ease-in-out;
+}
+.btn-quitar-carrito:hover {
+  background-color: #fdecec;
+}
+
+/* ---------- Card Mi Receta ---------- */
+.receta-card {
+  border: 1px solid #eef2f1;
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}

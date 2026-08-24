@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}FarmaPulse - Comparador de Medicamentos{% endblock %}
+
+{% block content %}
+
+<!-- ===================== HEADER COMPARADOR ===================== -->
+<header class="bg-gradient-to-r from-fpDark to-fpDark2">
+  <nav class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <a href="/" class="flex items-center gap-3">
+      <div class="w-11 h-11 bg-white rounded-xl flex items-center justify-center shadow">
+        <i class="fa-solid fa-plus text-fpGreen text-2xl"></i>
+      </div>
+      <span class="text-white font-extrabold text-xl tracking-tight">
+        Farma<span class="text-fpGreen">Pulse</span>
+      </span>
+    </a>
+    <a href="/" class="text-slate-200 hover:text-fpGreen text-sm font-medium flex items-center gap-2">
+      <i class="fa-solid fa-arrow-left"></i> Volver al inicio
+    </a>
+
+    <div class="hidden md:block">
+      {% include "_auth_navbar.html" %}
+    </div>
+  </nav>
+
+  <div class="max-w-7xl mx-auto px-6 pb-10 pt-4 text-center">
+    <h1 class="text-white text-3xl font-extrabold mb-2">
+      <i class="fa-solid fa-capsules text-fpGreen"></i> Comparador de Medicamentos
+    </h1>
+    <p class="text-slate-300">Encuentra el medicamento más económico cerca de ti y ahorra en tu tratamiento</p>
+    <p class="text-fpGreen text-sm font-semibold mt-2">
+      <i class="fa-solid fa-truck-fast"></i> Delivery disponible en San Borja, San Luis y La Victoria
+    </p>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-6 -mt-6 pb-20">
+
+  <!-- ===================== BLOQUE DE FILTROS ===================== -->
+  <section class="bg-white rounded-2xl shadow-xl border border-slate-100 p-6 md:p-8">
+    <div class="grid md:grid-cols-3 gap-5">
+      <div class="md:col-span-3">
+        <label class="block text-sm font-semibold text-slate-600 mb-1">Medicamento o principio activo</label>
+        <div class="relative">
+          <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
+          <input id="inputProducto" type="text" placeholder="Ej. Ibuprofeno, Panadol, Paracetamol..."
+                 class="w-full border border-slate-200 rounded-xl pl-11 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-600 mb-1">Departamento</label>
+        <select id="selectDepartamento" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40">
+          <option value="">-- Seleccione --</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-slate-600 mb-1">Provincia</label>
+        <select id="selectProvincia" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40" disabled>
+          <option value="">-- Seleccione --</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-slate-600 mb-1">Distrito</label>
+        <select id="selectDistrito" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40" disabled>
+          <option value="">-- Seleccione --</option>
+        </select>
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="block text-sm font-semibold text-slate-600 mb-1">Por Farmacia/Botica <span class="text-slate-400 font-normal">(opcional)</span></label>
+        <input id="inputFarmacia" type="text" placeholder="Ej. Inkafarma"
+               class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40">
+      </div>
+    </div>
+
+    <div class="flex flex-col sm:flex-row gap-3 mt-6">
+      <button id="btnBuscar"
+              class="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-8 py-3 shadow-lg shadow-fpGreen/20">
+        <i class="fa-solid fa-magnifying-glass"></i> Buscar
+      </button>
+      <button id="btnLimpiar"
+              class="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 transition text-slate-600 font-semibold rounded-xl px-8 py-3">
+        <i class="fa-solid fa-broom"></i> Limpiar Filtros
+      </button>
+    </div>
+  </section>
+
+  <!-- ===================== ESTADO DE CARGA ===================== -->
+  <div id="loadingState" class="hidden mt-8 text-center text-slate-500">
+    <i class="fa-solid fa-spinner fa-spin text-2xl text-fpGreen mb-2"></i>
+    <p>Buscando en farmacias afiliadas...</p>
+  </div>
+
+  <!-- ===================== PANEL DE AHORRO ===================== -->
+  <section id="panelAhorro" class="hidden mt-8 bg-fpMint border border-fpGreen/30 rounded-2xl p-6 flex flex-col md:flex-row items-start md:items-center gap-4">
+    <div class="w-12 h-12 rounded-full bg-fpGreen/15 flex items-center justify-center shrink-0">
+      <i class="fa-solid fa-lightbulb text-fpGreen text-xl"></i>
+    </div>
+    <div>
+      <p class="text-fpGreenDark font-bold uppercase text-sm tracking-wide">Máximo ahorro encontrado</p>
+      <p id="ahorroTexto" class="text-slate-700 mt-1"></p>
+    </div>
+  </section>
+
+  <!-- ===================== TABLA COMPARATIVA ===================== -->
+  <section class="mt-8 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
+          <tr>
+            <th class="text-left px-5 py-4">Medicamento</th>
+            <th class="text-left px-5 py-4">Tipo</th>
+            <th class="text-left px-5 py-4">Farmacia / Ubicación</th>
+            <th class="text-left px-5 py-4">Presentación</th>
+            <th class="text-left px-5 py-4">Precio Empaque</th>
+            <th class="text-left px-5 py-4">Precio x Pastilla</th>
+            <th class="text-left px-5 py-4">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="tablaResultados" class="divide-y divide-slate-100">
+          <tr>
+            <td colspan="7" class="text-center text-slate-400 py-14">
+              <i class="fa-solid fa-pills text-3xl mb-3 block"></i>
+              Realiza una búsqueda para comparar precios entre farmacias.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== MI CARRITO ===================== -->
+  <section class="mt-10">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <h2 class="font-bold text-lg text-fpDark flex items-center gap-2">
+        <i class="fa-solid fa-cart-shopping text-fpGreen"></i> Mi Carrito
+        <span id="carritoContador" class="hidden text-xs font-bold bg-fpGreen text-white rounded-full px-2 py-0.5">0</span>
+      </h2>
+      <div class="flex items-center gap-4">
+        <p class="text-slate-600 text-sm">
+          Total: <span id="carritoTotalMini" class="precio-destacado text-base">S/ 0.00</span>
+        </p>
+        <button id="btnComprar" disabled
+                class="hidden inline-flex items-center justify-center gap-2 bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-2.5 shadow-lg shadow-fpGreen/20 disabled:opacity-50">
+          <i class="fa-solid fa-bag-shopping"></i> Comprar
+        </button>
+      </div>
+    </div>
+    <div id="miCarrito" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <p class="text-slate-400 text-sm col-span-full">Aún no has agregado productos a tu carrito.</p>
+    </div>
+  </section>
+
+</main>
+
+{% include "_checkout_modal.html" %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Datos de ubicaciones renderizados desde Flask (Departamento -> Provincia -> Distrito)
+  window.__UBICACIONES__ = {{ ubicaciones | tojson }};
+</script>
+{% endblock %}
