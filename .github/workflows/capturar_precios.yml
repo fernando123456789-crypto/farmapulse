@@ -1,0 +1,31 @@
+name: Capturar precios nocturno
+
+on:
+  schedule:
+    # 18:00 hora Perú = 23:00 UTC (Perú es UTC-5 todo el año, sin horario de verano)
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}  # permite correrlo manualmente desde la pestaña Actions, para probar
+
+jobs:
+  capturar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Instalar navegador de Playwright
+        run: python -m playwright install --with-deps chromium
+
+      - name: Ejecutar captura de precios
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/capturar_precios.py
