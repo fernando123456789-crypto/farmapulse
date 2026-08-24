@@ -5,7 +5,7 @@
 
 <!-- ===================== HEADER COMPARADOR ===================== -->
 <header class="bg-gradient-to-r from-fpDark to-fpDark2">
-  <nav class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+  <nav class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-y-3">
     <a href="/" class="flex items-center gap-3">
       <div class="w-11 h-11 bg-white rounded-xl flex items-center justify-center shadow">
         <i class="fa-solid fa-plus text-fpGreen text-2xl"></i>
@@ -14,11 +14,14 @@
         Farma<span class="text-fpGreen">Pulse</span>
       </span>
     </a>
-    <a href="/" class="text-slate-200 hover:text-fpGreen text-sm font-medium flex items-center gap-2">
+    <a href="/" class="text-slate-200 hover:text-fpGreen text-sm font-medium items-center gap-2 hidden sm:flex">
       <i class="fa-solid fa-arrow-left"></i> Volver al inicio
     </a>
+    <a href="/" class="text-slate-200 hover:text-fpGreen text-lg flex sm:hidden" aria-label="Volver al inicio">
+      <i class="fa-solid fa-arrow-left"></i>
+    </a>
 
-    <div class="hidden md:block">
+    <div class="flex items-center">
       {% include "_auth_navbar.html" %}
     </div>
   </nav>
