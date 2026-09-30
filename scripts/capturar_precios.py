@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scrapers.registry import SCRAPERS_ACTIVOS, buscar_en_farmacias  # noqa: E402
+from dao.captura_precios_dao import CapturaPreciosDAO  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuración
@@ -56,55 +57,7 @@ if not SUPABASE_URL or not SUPABASE_KEY or "tu-proyecto" in SUPABASE_URL:
 from supabase import create_client  # noqa: E402
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-
-# ---------------------------------------------------------------------------
-# Helpers: obtener-o-crear farmacia / presentación por nombre
-# (evita que el script se caiga si falta una fila de catálogo)
-# ---------------------------------------------------------------------------
-_cache_farmacias: dict[str, int] = {}
-_cache_presentaciones: dict[str, int] = {}
-
-
-def obtener_o_crear_farmacia_id(nombre: str) -> int:
-    if nombre in _cache_farmacias:
-        return _cache_farmacias[nombre]
-
-    resultado = supabase.table("farmacias").select("id").eq("nombre", nombre).execute()
-    if resultado.data:
-        farmacia_id = resultado.data[0]["id"]
-    else:
-        insertado = supabase.table("farmacias").insert({"nombre": nombre}).execute()
-        farmacia_id = insertado.data[0]["id"]
-
-    _cache_farmacias[nombre] = farmacia_id
-    return farmacia_id
-
-
-def obtener_o_crear_presentacion_id(descripcion: str) -> int | None:
-    descripcion = (descripcion or "").strip()
-    if not descripcion:
-        return None
-    if descripcion in _cache_presentaciones:
-        return _cache_presentaciones[descripcion]
-
-    resultado = supabase.table("presentaciones").select("id").eq("descripcion", descripcion).execute()
-    if resultado.data:
-        presentacion_id = resultado.data[0]["id"]
-    else:
-        insertado = supabase.table("presentaciones").insert({"descripcion": descripcion}).execute()
-        presentacion_id = insertado.data[0]["id"]
-
-    _cache_presentaciones[descripcion] = presentacion_id
-    return presentacion_id
-
-
-# ---------------------------------------------------------------------------
-# Captura principal
-# ---------------------------------------------------------------------------
-def obtener_watchlist() -> list[dict]:
-    resultado = supabase.table("medicamentos").select("id, nombre").execute()
-    return resultado.data or []
+captura_dao = CapturaPreciosDAO(supabase)
 
 
 def capturar_precios_de_medicamento(medicamento: dict, nombres_farmacias: list[str]) -> tuple[int, int]:
@@ -120,7 +73,7 @@ def capturar_precios_de_medicamento(medicamento: dict, nombres_farmacias: list[s
         resultados = []
         for nombre_farmacia in nombres_farmacias:
             _registrar_log(medicamento_id, nombre_farmacia, encontrado=False,
-                            cantidad=0, error=str(exc))
+                           cantidad=0, error=str(exc))
         return 0, len(nombres_farmacias)
 
     precios_insertados = 0
@@ -134,44 +87,44 @@ def capturar_precios_de_medicamento(medicamento: dict, nombres_farmacias: list[s
             _registrar_log(medicamento_id, nombre_farmacia, encontrado=False, cantidad=0)
             continue
 
-        farmacia_id = obtener_o_crear_farmacia_id(nombre_farmacia)
+        farmacia_id = captura_dao.obtener_o_crear_farmacia_id(nombre_farmacia)
 
         for item in items_de_esta_farmacia:
             fila = {
                 "medicamento_id": medicamento_id,
                 "farmacia_id": farmacia_id,
                 "distrito_id": None,  # los scrapers hoy no devuelven precio por distrito
-                "presentacion_id": obtener_o_crear_presentacion_id(item.get("presentacion", "")),
+                "presentacion_id": captura_dao.obtener_o_crear_presentacion_id(item.get("presentacion", "")),
                 "precio_unitario": item.get("precio_unitario"),
                 "precio_empaque": item.get("precio_empaque"),
                 "fuente": "scraper",
                 "consultado_en": datetime.now(timezone.utc).isoformat(),
             }
-            supabase.table("precios").insert(fila).execute()
+            captura_dao.insertar_precio(fila)
             precios_insertados += 1
 
         _registrar_log(medicamento_id, nombre_farmacia, encontrado=True,
-                        cantidad=len(items_de_esta_farmacia))
+                   cantidad=len(items_de_esta_farmacia))
 
     return precios_insertados, farmacias_sin_resultado
 
 
 def _registrar_log(medicamento_id: str, nombre_farmacia: str, encontrado: bool,
                     cantidad: int, error: str | None = None) -> None:
-    farmacia_id = obtener_o_crear_farmacia_id(nombre_farmacia)
-    supabase.table("scrapes_log").insert({
+    farmacia_id = captura_dao.obtener_o_crear_farmacia_id(nombre_farmacia)
+    captura_dao.registrar_scrape({
         "farmacia_id": farmacia_id,
         "medicamento_id": medicamento_id,
         "encontrado": encontrado,
         "cantidad_resultados": cantidad,
         "error": error,
         "ejecutado_en": datetime.now(timezone.utc).isoformat(),
-    }).execute()
+    })
 
 
 def main() -> None:
     nombres_farmacias = [s.nombre_farmacia for s in SCRAPERS_ACTIVOS]
-    watchlist = obtener_watchlist()
+    watchlist = captura_dao.obtener_watchlist()
 
     if not watchlist:
         print("[capturar_precios] La tabla 'medicamentos' está vacía. "

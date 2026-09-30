@@ -32,6 +32,7 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, render_template, request
 
+from dao.receta_dao import RecetaDAO
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,7 @@ except Exception as exc:  # pragma: no cover
 # Almacenamiento en memoria como fallback si Supabase no está disponible
 # (permite probar la app end-to-end sin credenciales reales).
 _MEMORIA_RECETAS = []
+receta_dao = RecetaDAO(supabase_client, _MEMORIA_RECETAS)
 
 # ---------------------------------------------------------------------------
 # Autenticación (Supabase Auth) — correo + contraseña, "lo clásico"
@@ -514,18 +516,8 @@ def api_receta_guardar():
         "creado_en": datetime.now(timezone.utc).isoformat(),
     }
 
-    if supabase_client:
-        try:
-            resultado = (
-                supabase_client.table("listas_recetas").insert(registro).execute()
-            )
-            return jsonify({"ok": True, "fuente": "supabase", "data": resultado.data})
-        except Exception as exc:
-            print(f"[FarmaPulse] Error al guardar en Supabase: {exc}")
-            # Continúa hacia el fallback en memoria en vez de fallar la request.
-
-    _MEMORIA_RECETAS.append(registro)
-    return jsonify({"ok": True, "fuente": "memoria_local", "data": registro})
+    fuente, data = receta_dao.guardar(registro)
+    return jsonify({"ok": True, "fuente": fuente, "data": data})
 
 
 @app.route("/api/receta/historial", methods=["GET"])
@@ -534,23 +526,8 @@ def api_receta_historial():
     """Historial de "Mi Receta": ahora requiere sesión iniciada."""
     usuario_id = g.usuario["id"]
 
-    if supabase_client:
-        try:
-            resultado = (
-                supabase_client.table("listas_recetas")
-                .select("*")
-                .eq("usuario_id", usuario_id)
-                .order("creado_en", desc=True)
-                .execute()
-            )
-            return jsonify({"ok": True, "fuente": "supabase", "data": resultado.data})
-        except Exception as exc:
-            print(f"[FarmaPulse] Error al leer historial de Supabase: {exc}")
-
-    historial_local = [
-        r for r in _MEMORIA_RECETAS if r["usuario_id"] == usuario_id
-    ]
-    return jsonify({"ok": True, "fuente": "memoria_local", "data": historial_local})
+    fuente, data = receta_dao.listar_por_usuario(usuario_id)
+    return jsonify({"ok": True, "fuente": fuente, "data": data})
 
 
 # ---------------------------------------------------------------------------
