@@ -18,6 +18,8 @@ Uso local (para probarlo antes de programarlo):
     python scripts/capturar_precios.py
 
 En producción lo dispara GitHub Actions, no se corre a mano.
+
+. /test de push
 """
 
 from __future__ import annotations
