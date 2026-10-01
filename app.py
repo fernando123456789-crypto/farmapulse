@@ -29,6 +29,9 @@ from functools import wraps
 import requests
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, render_template, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_talisman import Talisman
 
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 
@@ -38,7 +41,42 @@ from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 load_dotenv()
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "farmapulse-dev-secret")
+
+# Validar que SECRET_KEY esté configurada en .env (nunca usar default inseguro en producción)
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError(
+        "❌ ERROR CRÍTICO: SECRET_KEY no está configurada.\n"
+        "Por favor, configura SECRET_KEY en tu archivo .env\n"
+        "Ejemplo: SECRET_KEY=<clave-segura-de-32-caracteres>"
+    )
+app.config["SECRET_KEY"] = SECRET_KEY
+
+# =========================================================================
+# Seguridad: Rate limiting contra fuerza bruta en autenticación
+# =========================================================================
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# =========================================================================
+# Seguridad: Cabeceras HTTP obligatorias contra CSRF, XSS, clickjacking
+# =========================================================================
+Talisman(
+    app,
+    force_https=False,  # En desarrollo. En producción cambiar a True
+    strict_transport_security=True,
+    strict_transport_security_max_age=31536000,
+    content_security_policy={
+        "default-src": "'self'",
+        "script-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "kit.fontawesome.com"],
+        "style-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
+        "img-src": ["'self'", "data:", "https:"],
+        "font-src": ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
+    }
+)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -356,6 +394,7 @@ def api_config():
 # Rutas - Autenticación (Supabase Auth: correo + contraseña)
 # ---------------------------------------------------------------------------
 @app.route("/api/auth/registro", methods=["POST"])
+@limiter.limit("3 per hour")  # 🔒 Prevenir spam/fuerza bruta en registro
 def api_auth_registro():
     if not _supabase_configurado():
         return jsonify({"ok": False, "error": "Supabase no está configurado en el servidor"}), 503
@@ -387,6 +426,7 @@ def api_auth_registro():
 
 
 @app.route("/api/auth/login", methods=["POST"])
+@limiter.limit("5 per 15 minutes")  # 🔒 Prevenir fuerza bruta en login
 def api_auth_login():
     if not _supabase_configurado():
         return jsonify({"ok": False, "error": "Supabase no está configurado en el servidor"}), 503
@@ -568,4 +608,7 @@ def server_error(_error):
 # Punto de entrada
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    # debug=False en producción (previene exposición del debugger interactivo de Werkzeug)
+    # Solo usar debug=True en desarrollo LOCAL
+    debug_mode = os.getenv("FLASK_ENV") == "development"
+    app.run(host="127.0.0.1", port=5000, debug=debug_mode)
