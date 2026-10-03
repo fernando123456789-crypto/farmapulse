@@ -1,17 +1,17 @@
 -- =============================================================
--- FarmaPulse - Esquema Principal de Base de Datos (PostgreSQL / Supabase)
+-- FarmaPulse - Esquema Físico de Base de Datos (PostgreSQL / Supabase)
 -- =============================================================
 
--- Extensiones requeridas para generación de UUID
 create extension if not exists "pgcrypto";
 
--- 1. Tabla de Farmacias / Cadenas
-create table if not exists public.farmacias (
-    id serial primary key,
-    nombre varchar(100) not null unique,
-    url_base varchar(255) not null,
-    activo boolean not null default true,
-    creado_en timestamptz not null default now()
+-- 1. Tabla de Usuarios
+create table if not exists public.usuarios (
+    id uuid primary key default gen_random_uuid(),
+    nombre varchar(100) not null,
+    apellido varchar(100) not null,
+    correo varchar(150) unique not null,
+    direccion text,
+    creado_el timestamptz not null default now()
 );
 
 -- 2. Tabla de Distritos
@@ -23,7 +23,16 @@ create table if not exists public.distritos (
     unique (nombre, provincia, departamento)
 );
 
--- 3. Tabla Catálogo Maestro de Medicamentos
+-- 3. Tabla de Farmacias / Cadenas
+create table if not exists public.farmacias (
+    id serial primary key,
+    nombre varchar(100) not null unique,
+    url_base varchar(255) not null,
+    activo boolean not null default true,
+    creado_en timestamptz not null default now()
+);
+
+-- 4. Tabla Catálogo Maestro de Medicamentos
 create table if not exists public.medicamentos (
     id uuid primary key default gen_random_uuid(),
     nombre varchar(255) not null,
@@ -34,16 +43,16 @@ create table if not exists public.medicamentos (
     constraint uk_medicamento_nombre_tipo unique (nombre, tipo)
 );
 
--- 4. Tabla de Presentaciones Farmacéuticas
+-- 5. Tabla de Presentaciones Farmacéuticas
 create table if not exists public.presentaciones (
     id serial primary key,
     medicamento_id uuid not null references public.medicamentos(id) on delete cascade,
-    forma_farmaceutica varchar(100) not null, -- Tableta, Jarabe, Inhalador, etc.
-    concentracion varchar(100),              -- 500mg, 10mg/5ml, etc.
+    forma_farmaceutica varchar(100) not null,
+    concentracion varchar(100),
     unidades_por_empaque integer default 1
 );
 
--- 5. Tabla Transaccional de Precios Capturados
+-- 6. Tabla Transaccional de Precios Capturados
 create table if not exists public.precios (
     id bigserial primary key,
     medicamento_id uuid not null references public.medicamentos(id) on delete cascade,
@@ -57,7 +66,26 @@ create table if not exists public.precios (
     consultado_en timestamptz not null default now()
 );
 
--- Índices B-Tree estratégicos para optimización de reportes y vistas diarias/semanales
+-- 7. Tabla de Favoritos (Productos Guardados)
+create table if not exists public.favoritos (
+    id serial primary key,
+    usuario_id uuid not null references public.usuarios(id) on delete cascade,
+    medicamento_id uuid not null references public.medicamentos(id) on delete cascade,
+    creado_el timestamptz not null default now(),
+    constraint uq_usuario_medicamento unique (usuario_id, medicamento_id)
+);
+
+-- 8. Tabla de Alertas de Precio
+create table if not exists public.alertas (
+    id serial primary key,
+    usuario_id uuid not null references public.usuarios(id) on delete cascade,
+    medicamento_id uuid not null references public.medicamentos(id) on delete cascade,
+    precio_deseado numeric(10, 4) not null,
+    activo boolean not null default true,
+    creado_el timestamptz not null default now()
+);
+
+-- Índices B-Tree estratégicos para optimización de consultas
 create index if not exists idx_precios_consulta_agrupada 
     on public.precios (medicamento_id, farmacia_id, consultado_en);
 
@@ -67,26 +95,28 @@ create index if not exists idx_precios_consultado_en
 create index if not exists idx_medicamentos_busqueda 
     on public.medicamentos (nombre, dci);
 
--- Carga inicial de Cadenas Farmacéuticas soportadas por los scrapers
-insert into public.farmacias (nombre, url_base) values
-    ('Inkafarma', 'https://inkafarma.pe'),
-    ('Mifarma', 'https://mifarma.com.pe'),
-    ('Farmacia Universal', 'https://farmaciauniversal.com')
-on conflict (nombre) do nothing;
+create index if not exists idx_precios_unitario 
+    on public.precios (precio_unitario);
 
--- Habilitar Row Level Security (RLS) para Supabase
-alter table public.farmacias enable row level security;
+-- Habilitar Row Level Security (RLS)
+alter table public.usuarios enable row level security;
 alter table public.distritos enable row level security;
+alter table public.farmacias enable row level security;
 alter table public.medicamentos enable row level security;
 alter table public.presentaciones enable row level security;
 alter table public.precios enable row level security;
+alter table public.favoritos enable row level security;
+alter table public.alertas enable row level security;
 
 -- Políticas de lectura pública para clientes
-create policy "farmacias_select_public" on public.farmacias for select using (true);
 create policy "distritos_select_public" on public.distritos for select using (true);
+create policy "farmacias_select_public" on public.farmacias for select using (true);
 create policy "medicamentos_select_public" on public.medicamentos for select using (true);
 create policy "presentaciones_select_public" on public.presentaciones for select using (true);
 create policy "precios_select_public" on public.precios for select using (true);
 
--- Políticas de inserción para workers y scripts
+-- Políticas de inserción y control transaccional
 create policy "precios_insert_service" on public.precios for insert with check (true);
+create policy "usuarios_manage_own" on public.usuarios for all using (auth.uid() = id);
+create policy "favoritos_manage_own" on public.favoritos for all using (auth.uid() = usuario_id);
+create policy "alertas_manage_own" on public.alertas for all using (auth.uid() = usuario_id);
