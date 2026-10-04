@@ -603,7 +603,15 @@ def not_found(_error):
 def server_error(_error):
     return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
 
-
+@app.after_request
+def add_security_headers(response):
+    """Agrega headers de seguridad HTTPS/HSTS"""
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
+    
 # ---------------------------------------------------------------------------
 # Punto de entrada
 # ---------------------------------------------------------------------------
