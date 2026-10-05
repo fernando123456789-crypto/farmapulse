@@ -31,10 +31,10 @@ from dotenv import load_dotenv
 from flask import Flask, g, jsonify, render_template, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask_talisman import Talisman
+from http_security import init_http_security
 
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, CSRFError
 
 # ---------------------------------------------------------------------------
 # Configuración inicial
@@ -42,6 +42,7 @@ from flask_wtf.csrf import CSRFProtect
 load_dotenv()
 
 app = Flask(__name__)
+init_http_security(app)
 csrf = CSRFProtect(app)
 
 # Validar que SECRET_KEY esté configurada en .env (nunca usar default inseguro en producción)
@@ -61,23 +62,6 @@ limiter = Limiter(
     app=app,
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"]
-)
-
-# =========================================================================
-# Seguridad: Cabeceras HTTP obligatorias contra CSRF, XSS, clickjacking
-# =========================================================================
-Talisman(
-    app,
-    force_https=False,  # En desarrollo. En producción cambiar a True
-    strict_transport_security=True,
-    strict_transport_security_max_age=31536000,
-    content_security_policy={
-        "default-src": "'self'",
-        "script-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "kit.fontawesome.com"],
-        "style-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
-        "img-src": ["'self'", "data:", "https:"],
-        "font-src": ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
-    }
 )
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -133,6 +117,13 @@ def _auth_headers(access_token: str | None = None) -> dict:
 
 def _supabase_configurado() -> bool:
     return bool(SUPABASE_URL and SUPABASE_KEY and "tu-proyecto" not in SUPABASE_URL)
+
+
+def usuario_publico(usuario):
+    """El navegador solo necesita identidad y correo, no metadatos de Auth."""
+    if not usuario:
+        return None
+    return {"id": usuario.get("id"), "email": usuario.get("email")}
 
 
 def auth_registrar(email: str, password: str) -> dict:
@@ -412,8 +403,8 @@ def api_auth_registro():
 
     try:
         datos = auth_registrar(email, password)
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+    except ValueError:
+        return jsonify({"ok": False, "error": "No se pudo registrar la cuenta. Revisa los datos o intenta iniciar sesión."}), 400
     except requests.RequestException:
         return jsonify({"ok": False, "error": "No se pudo contactar el servicio de autenticación"}), 502
 
@@ -421,9 +412,8 @@ def api_auth_registro():
     return jsonify({
         "ok": True,
         "requiere_confirmacion": requiere_confirmacion,
-        "usuario": datos.get("user"),
+        "usuario": usuario_publico(datos.get("user")),
         "access_token": datos.get("access_token"),
-        "refresh_token": datos.get("refresh_token"),
     })
 
 
@@ -442,16 +432,15 @@ def api_auth_login():
 
     try:
         datos = auth_iniciar_sesion(email, password)
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 401
+    except ValueError:
+        return jsonify({"ok": False, "error": "Credenciales inválidas"}), 401
     except requests.RequestException:
         return jsonify({"ok": False, "error": "No se pudo contactar el servicio de autenticación"}), 502
 
     return jsonify({
         "ok": True,
-        "usuario": datos.get("user"),
+        "usuario": usuario_publico(datos.get("user")),
         "access_token": datos.get("access_token"),
-        "refresh_token": datos.get("refresh_token"),
     })
 
 
@@ -471,11 +460,11 @@ def api_auth_logout():
 @sesion_opcional
 def api_auth_sesion():
     if g.usuario:
-        return jsonify({"ok": True, "autenticado": True, "usuario": g.usuario})
+        return jsonify({"ok": True, "autenticado": True, "usuario": usuario_publico(g.usuario)})
     return jsonify({"ok": True, "autenticado": False, "usuario": None})
 
 
-@app.route("/api/buscar", methods=["GET", "POST"])
+@app.route("/api/buscar", methods=["POST"])
 @sesion_requerida
 def api_buscar():
     """
@@ -486,10 +475,7 @@ def api_buscar():
     se usan datos de demostración para que el frontend nunca se quede
     sin nada que mostrar — queda marcado como "fuente": "demo".
     """
-    if request.method == "POST":
-        payload = request.get_json(silent=True) or {}
-    else:
-        payload = request.args
+    payload = request.get_json(silent=True) or {}
 
     termino = (payload.get("producto") or payload.get("termino") or "").strip()
     departamento = payload.get("departamento") or ""
@@ -605,15 +591,10 @@ def not_found(_error):
 def server_error(_error):
     return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
 
-@app.after_request
-def add_security_headers(response):
-    """Agrega headers de seguridad HTTPS/HSTS"""
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    return response
-    
+@app.errorhandler(CSRFError)
+def csrf_error(_error):
+    return jsonify(ok=False, error="La sesión del formulario expiró. Recarga la página e inténtalo de nuevo."), 400
+
 # ---------------------------------------------------------------------------
 # Punto de entrada
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 
 {% block content %}
 
-<!-- ===================== HEADER COMPARADOR ===================== -->
+{# ===================== HEADER COMPARADOR ===================== #}
 <header class="bg-gradient-to-r from-fpDark to-fpDark2">
   <nav class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-y-3">
     <a href="/" class="flex items-center gap-3">
@@ -39,7 +39,7 @@
 
 <main class="max-w-7xl mx-auto px-6 -mt-6 pb-20">
 
-  <!-- ===================== BLOQUE DE FILTROS ===================== -->
+  {# ===================== BLOQUE DE FILTROS ===================== #}
   <section class="bg-white rounded-2xl shadow-xl border border-slate-100 p-6 md:p-8">
     <div class="grid md:grid-cols-3 gap-5">
       <div class="md:col-span-3">
@@ -89,13 +89,13 @@
     </div>
   </section>
 
-  <!-- ===================== ESTADO DE CARGA ===================== -->
+  {# ===================== ESTADO DE CARGA ===================== #}
   <div id="loadingState" class="hidden mt-8 text-center text-slate-500">
     <i class="fa-solid fa-spinner fa-spin text-2xl text-fpGreen mb-2"></i>
     <p>Buscando en farmacias afiliadas...</p>
   </div>
 
-  <!-- ===================== PANEL DE AHORRO ===================== -->
+  {# ===================== PANEL DE AHORRO ===================== #}
   <section id="panelAhorro" class="hidden mt-8 bg-fpMint border border-fpGreen/30 rounded-2xl p-6 flex flex-col md:flex-row items-start md:items-center gap-4">
     <div class="w-12 h-12 rounded-full bg-fpGreen/15 flex items-center justify-center shrink-0">
       <i class="fa-solid fa-lightbulb text-fpGreen text-xl"></i>
@@ -106,7 +106,7 @@
     </div>
   </section>
 
-  <!-- ===================== TABLA COMPARATIVA ===================== -->
+  {# ===================== TABLA COMPARATIVA ===================== #}
   <section class="mt-8 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -133,7 +133,7 @@
     </div>
   </section>
 
-  <!-- ===================== MI CARRITO ===================== -->
+  {# ===================== MI CARRITO ===================== #}
   <section class="mt-10">
     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
       <h2 class="font-bold text-lg text-fpDark flex items-center gap-2">
@@ -162,8 +162,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script>
-  // Datos de ubicaciones renderizados desde Flask (Departamento -> Provincia -> Distrito)
-  window.__UBICACIONES__ = {{ ubicaciones | tojson }};
-</script>
+<div id="ubicaciones-data" hidden data-ubicaciones='{{ ubicaciones | tojson }}'></div>
 {% endblock %}

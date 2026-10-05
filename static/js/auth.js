@@ -35,14 +35,19 @@
     return id;
   }
 
+  const csrfHeaders = () => ({
+    "X-CSRFToken": document.querySelector('meta[name="csrf-token"]').content,
+  });
+
   window.FarmaPulseAuth = {
+    csrfHeaders,
     estaAutenticado: () => !!obtenerSesion()?.access_token,
     obtenerAccessToken: () => obtenerSesion()?.access_token || null,
     obtenerUsuarioIdActivo: () => obtenerSesion()?.usuario?.id || obtenerUsuarioAnonimo(),
     obtenerCorreoActivo: () => obtenerSesion()?.usuario?.email || null,
     headersAuth: () => {
       const token = obtenerSesion()?.access_token;
-      return token ? { Authorization: `Bearer ${token}` } : {};
+      return { ...csrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
     },
   };
 
@@ -120,7 +125,7 @@
     try {
       const respuesta = await fetch("/api/auth/registro", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ email, password }),
       });
       const data = await respuesta.json();
@@ -129,7 +134,7 @@
       if (data.requiere_confirmacion) {
         mostrarErrorFormulario(formRegistro, "¡Cuenta creada! Revisa tu correo para confirmarla antes de iniciar sesión.", true);
       } else {
-        guardarSesion({ access_token: data.access_token, refresh_token: data.refresh_token, usuario: data.usuario });
+        guardarSesion({ access_token: data.access_token, usuario: data.usuario });
         actualizarNavbar();
         cerrarModal(modalRegistro);
         formRegistro.reset();
@@ -158,13 +163,13 @@
     try {
       const respuesta = await fetch("/api/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ email, password }),
       });
       const data = await respuesta.json();
       if (!data.ok) throw new Error(data.error || "No se pudo iniciar sesión");
 
-      guardarSesion({ access_token: data.access_token, refresh_token: data.refresh_token, usuario: data.usuario });
+      guardarSesion({ access_token: data.access_token, usuario: data.usuario });
       actualizarNavbar();
       cerrarModal(modalLogin);
       formLogin.reset();
@@ -184,7 +189,7 @@
     window.dispatchEvent(new CustomEvent("farmapulse:sesion-cambiada"));
     if (token) {
       try {
-        await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+        await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}`, ...csrfHeaders() } });
       } catch { /* best-effort */ }
     }
   });

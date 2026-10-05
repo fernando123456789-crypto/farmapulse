@@ -12,7 +12,7 @@
   const tablaResultados = document.getElementById("tablaResultados");
   if (!tablaResultados) return;
 
-  const ubicaciones = window.__UBICACIONES__ || {};
+  const ubicaciones = JSON.parse(document.getElementById("ubicaciones-data").dataset.ubicaciones);
 
   const selectDepartamento = document.getElementById("selectDepartamento");
   const selectProvincia = document.getElementById("selectProvincia");
@@ -552,8 +552,7 @@
     checkoutTiempo.textContent = `${configServicio.tiempo_delivery_minutos} minutos`;
     checkoutCostoEnvio.textContent = formatearSoles(costoEnvio);
 
-    const mensaje = construirMensajeWhatsapp();
-    btnEnviarWhatsappPedido.href = `https://wa.me/${configServicio.whatsapp_numero}?text=${encodeURIComponent(mensaje)}`;
+    btnEnviarWhatsappPedido.href = `https://wa.me/${configServicio.whatsapp_numero}`;
 
     modalCheckout.classList.remove("hidden");
   }

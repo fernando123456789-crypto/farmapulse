@@ -1,0 +1,9 @@
+{
+  "css/styles.css": "sha384-DcDYzeuQoVUqjGpEIh5jGaALQJHR+6H9qULDLKylSKybgHx6TJNQOMutVLgLfuA0",
+  "css/tailwind.css": "sha384-+YGuDsmVtqoWEqKja3kjd0rZchQpyXmoKLfBWrx0Cs5YHiE5ZkxkybrQRdOFp2Ac",
+  "js/auth.js": "sha384-8mqr4Q3nobKbQN791yRJGIP+9veLjlc6mpYDBypc8Gi1qF6Lz6gbe6Z2PqhIGpG1",
+  "js/main.js": "sha384-kUlKyhBS4OUqg5qwc+PKoZ2OBXsmY9Boj7OmpWBwzXKm8hpz3CIemIfs0rmA92Ax",
+  "js/whatsapp.js": "sha384-p75M6ss76ixGFqxekV1L8GlBirWwnZE02dHhTMIcjYKTc0mLeerXUhe1b8FpMAji",
+  "vendor/fontawesome/css/all.min.css": "sha384-PPIZEGYM1v8zp5Py7UjFb79S58UeqCL9pYVnVPURKEqvioPROaVAJKKLzvH2rDnI",
+  "vendor/poppins/poppins.css": "sha384-oMYTKq2HvIdfdI6ZL7Nj4CX+Ia4NdChB16vP5BCxQ8Xp2RYxNkpSQ8wtitIUrTeY"
+}

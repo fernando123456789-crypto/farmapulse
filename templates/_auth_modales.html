@@ -9,7 +9,7 @@
     </div>
     <h2 class="text-xl font-extrabold text-fpDark mb-1">Inicia sesión</h2>
     <p class="text-slate-500 text-sm mb-6">Accede para guardar tu receta y ver tu historial.</p>
-    <form id="formLogin" class="space-y-4">
+    <form method="post" action="/api/auth/login" id="formLogin" class="space-y-4">
       <div data-error class="hidden text-sm rounded-lg px-3 py-2 border"></div>
       <div>
         <label class="block text-sm font-semibold text-slate-600 mb-1">Correo electrónico</label>
@@ -43,7 +43,7 @@
     </div>
     <h2 class="text-xl font-extrabold text-fpDark mb-1">Crea tu cuenta</h2>
     <p class="text-slate-500 text-sm mb-6">Regístrate con tu correo (Gmail u otro) para guardar tu receta.</p>
-    <form id="formRegistro" class="space-y-4">
+    <form method="post" action="/api/auth/registro" id="formRegistro" class="space-y-4">
       <div data-error class="hidden text-sm rounded-lg px-3 py-2 border"></div>
       <div>
         <label class="block text-sm font-semibold text-slate-600 mb-1">Correo electrónico</label>

@@ -1,0 +1,6 @@
+# Los hashes SRI deben ser idénticos en checkouts Windows y Linux.
+*.js text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.woff2 binary
+*.ttf binary

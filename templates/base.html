@@ -6,32 +6,11 @@
 <title>{% block title %}FarmaPulse - Tu Red Compartida para Medicamentos de Confianza{% endblock %}</title>
 <meta name="description" content="FarmaPulse: compara precios de medicamentos en farmacias del Perú y ahorra en tus tratamientos.">
 
-<!-- Tailwind CSS (CDN) -->
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: {
-          fpDark: '#0d3b4f',
-          fpDark2: '#12495f',
-          fpGreen: '#1fa971',
-          fpGreenDark: '#158a5a',
-          fpMint: '#e7f6ef',
-        }
-      }
-    }
-  }
-</script>
-
-<!-- FontAwesome (CDN) -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-
-<!-- Google Fonts -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}" integrity="{{ asset_integrity('css/tailwind.css') }}" crossorigin="anonymous">
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/fontawesome/css/all.min.css') }}" integrity="{{ asset_integrity('vendor/fontawesome/css/all.min.css') }}" crossorigin="anonymous">
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/poppins/poppins.css') }}" integrity="{{ asset_integrity('vendor/poppins/poppins.css') }}" crossorigin="anonymous">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" integrity="{{ asset_integrity('css/styles.css') }}" crossorigin="anonymous">
 {% block extra_head %}{% endblock %}
 </head>
 <body class="font-[Poppins] bg-white text-slate-800">
@@ -57,12 +36,12 @@
 
 {% include "_auth_modales.html" %}
 
-<!-- Botón flotante de WhatsApp (se arma en JS con /api/config) -->
+{# Botón flotante de WhatsApp (se arma en JS con /api/config) #}
 <div id="botonWhatsapp"></div>
 
 {% block extra_scripts %}{% endblock %}
-<script src="{{ url_for('static', filename='js/auth.js') }}"></script>
-<script src="{{ url_for('static', filename='js/whatsapp.js') }}"></script>
-<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+<script src="{{ url_for('static', filename='js/auth.js') }}" integrity="{{ asset_integrity('js/auth.js') }}" crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/whatsapp.js') }}" integrity="{{ asset_integrity('js/whatsapp.js') }}" crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}" integrity="{{ asset_integrity('js/main.js') }}" crossorigin="anonymous"></script>
 </body>
 </html>

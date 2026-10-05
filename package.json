@@ -1,0 +1,12 @@
+{
+  "name": "farmapulse-assets",
+  "private": true,
+  "scripts": {
+    "build": "tailwindcss -i assets/tailwind.css -o static/css/tailwind.css --minify && node scripts/build-assets.cjs"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17",
+    "@fortawesome/fontawesome-free": "6.5.2",
+    "@fontsource/poppins": "5.2.6"
+  }
+}
