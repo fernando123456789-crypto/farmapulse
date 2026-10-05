@@ -7,10 +7,10 @@
 <meta name="description" content="FarmaPulse: compara precios de medicamentos en farmacias del Perú y ahorra en tus tratamientos.">
 
 <meta name="csrf-token" content="{{ csrf_token() }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}" integrity="{{ asset_integrity('css/tailwind.css') }}" crossorigin="anonymous">
-<link rel="stylesheet" href="{{ url_for('static', filename='vendor/fontawesome/css/all.min.css') }}" integrity="{{ asset_integrity('vendor/fontawesome/css/all.min.css') }}" crossorigin="anonymous">
-<link rel="stylesheet" href="{{ url_for('static', filename='vendor/poppins/poppins.css') }}" integrity="{{ asset_integrity('vendor/poppins/poppins.css') }}" crossorigin="anonymous">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" integrity="{{ asset_integrity('css/styles.css') }}" crossorigin="anonymous">
+<link rel="stylesheet" href="{{ asset_url('css/tailwind.css') }}" integrity="{{ asset_integrity('css/tailwind.css') }}" crossorigin="anonymous">
+<link rel="stylesheet" href="{{ asset_url('vendor/fontawesome/css/all.min.css') }}" integrity="{{ asset_integrity('vendor/fontawesome/css/all.min.css') }}" crossorigin="anonymous">
+<link rel="stylesheet" href="{{ asset_url('vendor/poppins/poppins.css') }}" integrity="{{ asset_integrity('vendor/poppins/poppins.css') }}" crossorigin="anonymous">
+<link rel="stylesheet" href="{{ asset_url('css/styles.css') }}" integrity="{{ asset_integrity('css/styles.css') }}" crossorigin="anonymous">
 {% block extra_head %}{% endblock %}
 </head>
 <body class="font-[Poppins] bg-white text-slate-800">
@@ -40,8 +40,8 @@
 <div id="botonWhatsapp"></div>
 
 {% block extra_scripts %}{% endblock %}
-<script src="{{ url_for('static', filename='js/auth.js') }}" integrity="{{ asset_integrity('js/auth.js') }}" crossorigin="anonymous"></script>
-<script src="{{ url_for('static', filename='js/whatsapp.js') }}" integrity="{{ asset_integrity('js/whatsapp.js') }}" crossorigin="anonymous"></script>
-<script src="{{ url_for('static', filename='js/main.js') }}" integrity="{{ asset_integrity('js/main.js') }}" crossorigin="anonymous"></script>
+<script src="{{ asset_url('js/auth.js') }}" integrity="{{ asset_integrity('js/auth.js') }}" crossorigin="anonymous"></script>
+<script src="{{ asset_url('js/whatsapp.js') }}" integrity="{{ asset_integrity('js/whatsapp.js') }}" crossorigin="anonymous"></script>
+<script src="{{ asset_url('js/main.js') }}" integrity="{{ asset_integrity('js/main.js') }}" crossorigin="anonymous"></script>
 </body>
 </html>

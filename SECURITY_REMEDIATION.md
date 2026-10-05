@@ -48,8 +48,9 @@ las instancias originales. No se suprimen reglas de ZAP para obtener cero alerta
     No se elimina funcionalidad para ocultar esta detección. Reescanear con AJAX
     spider y una sesión autenticada para cubrir flujos dinámicos.
 12. **Re-examine Cache-control Directives.** HTML con CSRF, API y errores usan
-    `no-store`. Archivos estáticos públicos requieren revalidación para evitar
-    servir JS antiguo con un hash SRI nuevo. El proxy/CDN debe respetar la política.
+    `no-store`. Archivos estáticos públicos requieren revalidación y sus URL llevan
+    una versión derivada del hash para evitar servir JS antiguo con un hash SRI
+    nuevo. El proxy/CDN debe respetar la política.
 13. **User Agent Fuzzer.** Informativa: comprobar diferencias entre agentes.
     Las pruebas verifican que variar User-Agent no elude la autenticación.
     Comparar respuestas concretas del informe antes de cerrar su revisión.
@@ -125,6 +126,14 @@ git diff --check
 Las pruebas simulan las respuestas de Supabase; no crean cuentas ni consultan
 farmacias. Cubren páginas/errores/estáticos, HTTPS/cookies, CSRF, login/registro,
 logout, límites, búsqueda/recetas, User-Agent, integridad y exposición de datos.
+
+La verificación funcional local en navegador, con proveedores simulados, completó
+login válido/inválido, registro con confirmación y con acceso automático, búsqueda,
+filtros, precios/ahorro, agregar/quitar carrito, recarga con sesión/carrito,
+checkout con totales, copia del pedido, cierre de sesión y navegación al inicio.
+Las imágenes externas cargaron y no se observaron errores de consola. Se detectó
+y corrigió un bloqueo de scripts por caché anterior mediante versiones en las URL
+de recursos. No se realizaron pagos ni se enviaron mensajes de WhatsApp.
 
 Después de desplegar, repetir ZAP sobre la URL y rama correctas, sin credenciales
 en URL, con sesión autenticada y AJAX spider. Guardar el informe con evidencias

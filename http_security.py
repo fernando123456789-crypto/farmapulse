@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-from flask import jsonify, redirect, request
+from flask import jsonify, redirect, request, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
@@ -32,6 +32,9 @@ def init_http_security(app):
         (Path(app.static_folder) / 'asset-integrity.json').read_text(encoding='utf-8')
     )
     app.jinja_env.globals['asset_integrity'] = lambda filename: manifest[filename]
+    app.jinja_env.globals['asset_url'] = lambda filename: url_for(
+        'static', filename=filename, v=manifest[filename].split('-', 1)[1]
+    )
 
     @app.before_request
     def protect_transport_and_urls():

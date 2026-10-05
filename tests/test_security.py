@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 os.environ['SECRET_KEY'] = 'test-only-key-not-for-production-123456789'
 os.environ['FLASK_ENV'] = 'production'
@@ -175,8 +176,15 @@ class SecurityTests(unittest.TestCase):
                 if asset:
                     integrity = re.search(r'integrity="([^"]+)"', tag)
                     self.assertIsNotNone(integrity)
-                    actual = base64.b64encode(hashlib.sha384((ROOT / 'static' / asset[1]).read_bytes()).digest()).decode()
+                    parsed = urlsplit(asset[1])
+                    actual = base64.b64encode(hashlib.sha384((ROOT / 'static' / parsed.path).read_bytes()).digest()).decode()
                     self.assertEqual(integrity[1], 'sha384-' + actual)
+                    self.assertEqual(parse_qs(parsed.query)['v'], [actual])
+                    response = self.get('/static/' + asset[1])
+                    self.assertEqual(response.status_code, 200)
+                    served = base64.b64encode(hashlib.sha384(response.data).digest()).decode()
+                    self.assertEqual(served, actual)
+                    response.close()
 
     def test_render_proxy_recognizes_https_without_trusting_client_ip(self):
         with patch.dict(os.environ, {'RENDER': 'true', 'TRUSTED_PROXY_HOPS': '0'}):
