@@ -16,12 +16,17 @@ def init_http_security(app):
         SESSION_COOKIE_SAMESITE='Lax',
         MAX_CONTENT_LENGTH=64 * 1024,
     )
-    # Habilitar solo detrás de proxies conocidos que sobrescriben estas cabeceras.
+    # Render termina TLS y pasa HTTP al backend, inaccesible desde Internet.
+    # Confiar solo en el esquema del último proxy de Render; no asumir su cadena de IP.
+    render = os.getenv('RENDER') == 'true'
     hops = int(os.getenv('TRUSTED_PROXY_HOPS', '0'))
+    proto_hops = int(os.getenv('TRUSTED_PROTO_HOPS', str(hops or (1 if render else 0))))
     if hops < 0:
         raise ValueError('TRUSTED_PROXY_HOPS debe ser mayor o igual a cero')
-    if hops:
-        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=hops, x_proto=hops)
+    if proto_hops < 0:
+        raise ValueError('TRUSTED_PROTO_HOPS debe ser mayor o igual a cero')
+    if hops or proto_hops:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=hops, x_proto=proto_hops)
 
     manifest = json.loads(
         (Path(app.static_folder) / 'asset-integrity.json').read_text(encoding='utf-8')

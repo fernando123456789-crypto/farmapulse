@@ -12,8 +12,12 @@ os.environ['FLASK_ENV'] = 'production'
 os.environ['SUPABASE_URL'] = ''
 os.environ['SUPABASE_KEY'] = ''
 os.environ['TRUSTED_PROXY_HOPS'] = '0'
+os.environ['TRUSTED_PROTO_HOPS'] = '0'
+os.environ['RENDER'] = 'false'
 
 import app as module
+from flask import Flask, request
+from http_security import init_http_security
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -173,6 +177,33 @@ class SecurityTests(unittest.TestCase):
                     self.assertIsNotNone(integrity)
                     actual = base64.b64encode(hashlib.sha384((ROOT / 'static' / asset[1]).read_bytes()).digest()).decode()
                     self.assertEqual(integrity[1], 'sha384-' + actual)
+
+    def test_render_proxy_recognizes_https_without_trusting_client_ip(self):
+        with patch.dict(os.environ, {'RENDER': 'true', 'TRUSTED_PROXY_HOPS': '0'}):
+            os.environ.pop('TRUSTED_PROTO_HOPS', None)
+            app = Flask('render-test', static_folder=str(ROOT / 'static'))
+            init_http_security(app)
+
+            @app.route('/')
+            def home():
+                return {'secure': request.is_secure, 'remote': request.remote_addr}
+
+            response = app.test_client().get('/', headers={
+                'X-Forwarded-Proto': 'http, https',
+                'X-Forwarded-For': '192.0.2.12',
+            })
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json['secure'])
+            self.assertEqual(response.json['remote'], '127.0.0.1')
+            self.assertIn('Strict-Transport-Security', response.headers)
+
+    def test_render_proxy_can_be_disabled_explicitly(self):
+        with patch.dict(os.environ, {'RENDER': 'true', 'TRUSTED_PROXY_HOPS': '0',
+                                    'TRUSTED_PROTO_HOPS': '0'}):
+            app = Flask('render-disabled-test', static_folder=str(ROOT / 'static'))
+            init_http_security(app)
+            response = app.test_client().get('/', headers={'X-Forwarded-Proto': 'https'})
+            self.assertEqual(response.status_code, 308)
 
 
 if __name__ == '__main__':

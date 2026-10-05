@@ -79,6 +79,20 @@ en esta aplicación y es necesario para persistir recetas en su base de datos.
 
 ## Despliegue
 
+- El servicio público identificado es `https://farmapulse.onrender.com/`.
+  La comprobación HTTP del 5 de octubre de 2026 encontró HTML anterior con Tailwind
+  CDN y ausencia de CSP, HSTS, anti-clickjacking y nosniff en página, comparador,
+  API pública, JS y 404. Los cambios de esta rama todavía no estaban activos.
+- Para el servicio existente en Render, elegir la rama `seguridad-login` en
+  Settings y desplegar su último commit. Build Command:
+  `pip install -r requirements.txt`. Los assets compilados están en Git, por lo
+  que el despliegue no necesita npm. Start Command:
+  `gunicorn --bind 0.0.0.0:$PORT app:app`.
+- Render establece `RENDER=true`: en ese entorno la aplicación confía en el
+  último `X-Forwarded-Proto` para reconocer el HTTPS terminado por su balanceador,
+  sin confiar automáticamente en `X-Forwarded-For`. Se puede sobrescribir con
+  `TRUSTED_PROTO_HOPS`; 0 desactiva esa confianza. Fuera de Render vale 0 salvo
+  configuración explícita. Gunicorn se instala en sistemas Unix, no en Windows.
 - No definir `FLASK_ENV=development` en producción. Utilizar un servidor WSGI
   detrás de TLS; no exponer el servidor de desarrollo de Flask.
 - `TRUSTED_PROXY_HOPS` vale 0 por defecto. Configurarlo con el número exacto de
@@ -123,3 +137,6 @@ positivos. No se ejecutó una auditoría remota activa desde este trabajo.
 - https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Subresource_Integrity
 - https://v3.tailwindcss.com/docs/installation
 - https://www.zaproxy.org/docs/desktop/addons/passive-scan-rules/
+- https://render.com/docs/web-services#connecting-from-the-public-internet
+- https://render.com/docs/environment-variables
+- https://render.com/docs/deploy-flask

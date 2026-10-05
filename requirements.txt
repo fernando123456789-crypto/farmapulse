@@ -52,3 +52,4 @@ xxhash==4.0.1
 zstandard==0.25.0
 
 python-dotenv==1.2.4
+gunicorn==26.2.0; sys_platform != 'win32'
