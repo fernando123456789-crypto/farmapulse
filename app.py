@@ -34,6 +34,7 @@ from flask_limiter.util import get_remote_address
 from flask_talisman import Talisman
 
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
+from flask_wtf.csrf import CSRFProtect
 
 # ---------------------------------------------------------------------------
 # Configuración inicial
@@ -41,6 +42,7 @@ from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 load_dotenv()
 
 app = Flask(__name__)
+csrf = CSRFProtect(app)
 
 # Validar que SECRET_KEY esté configurada en .env (nunca usar default inseguro en producción)
 SECRET_KEY = os.getenv("SECRET_KEY")
