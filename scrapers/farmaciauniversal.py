@@ -1,45 +1,4 @@
-"""
-FarmaPulse - scrapers/farmaciauniversal.py
-
-Búsqueda en vivo en Farmacia Universal (farmaciauniversal.com), tienda
-construida sobre VTEX (no Algolia, a diferencia de Inkafarma/Mifarma).
-
-Cómo se descubrió: inspeccionando (DevTools -> Network -> Fetch/XHR) la
-petición que el propio sitio dispara al renderizar la página de
-resultados de búsqueda ("/panadol?_q=panadol&map=ft"). VTEX resuelve
-esa página en el servidor consultando varias operaciones GraphQL
-(productSearchV3, facetsV2, SearchMetadataV2) y devuelve TODO el
-resultado ya resuelto en un solo JSON de "routing" — no hace falta
-autenticarse ni conocer los hashes de las queries persistidas, solo
-pedir esa misma URL de routing con Accept: application/json.
-
-Formato de la respuesta: es el JSON que arma el propio Runtime de VTEX
-para hidratar la página. Dentro de "queryData" viene una lista de 2-3
-operaciones GraphQL ya resueltas; la que nos interesa es la que tiene
-"productSearchV3" en su query — su campo "data" es, a su vez, un STRING
-con el JSON de productSearch.products (doblemente serializado, típico
-de VTEX).
-
-Reglas que este módulo respeta siempre (idénticas a inkafarma.py /
-mifarma.py):
-  1. Solo consume este endpoint público de búsqueda (el mismo que arma
-     cualquier visitante al cargar la página de resultados), no
-     endpoints internos/admin.
-  2. Sin técnicas de evasión de detección (sin fingerprinting de TLS,
-     sin rotación de IP, sin spoofing de huellas de navegador más allá
-     de un User-Agent normal e identificable).
-  3. Caché y límite de frecuencia (heredados de ScraperFarmacia) para
-     no generar carga indebida sobre la infraestructura de VTEX.
-
-Nota de robustez: al ser un endpoint de "routing" pensado para
-hidratar la página (no una API pública documentada como el catálogo
-VTEX clásico), Farmacia Universal podría cambiar su formato con
-actualizaciones del theme/runtime más seguido que una API de catálogo
-estable. Si en algún momento este scraper empieza a devolver listas
-vacías sin razón aparente, lo primero a revisar es si el índice de
-"queryData" que contiene productSearchV3 cambió de posición, o si
-apareció algún campo nuevo con el mismo propósito.
-"""
+"""Consulta de productos de Farmacia Universal."""
 
 import json
 import re
@@ -155,12 +114,6 @@ class FarmaciaUniversalScraper(ScraperFarmacia):
         return resultados
 
     def _buscar_en_vivo(self, termino: str) -> list[dict]:
-        # Misma URL de "routing" que arma el propio sitio al renderizar
-        # la página de resultados (/{termino}?_q={termino}&map=ft) — VTEX
-        # resuelve ahí mismo, en el servidor, las queries GraphQL que
-        # arman la vitrina (productSearchV3, facetsV2, etc.) y entrega
-        # todo ya resuelto en un solo JSON si se pide con
-        # Accept: application/json.
         url = f"{self.url_base}/{termino}"
         params = {
             "_q": termino,

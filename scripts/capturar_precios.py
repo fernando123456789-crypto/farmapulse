@@ -1,24 +1,4 @@
-"""
-FarmaPulse - scripts/capturar_precios.py
------------------------------------------
-Script independiente de app.py. Se ejecuta una vez por noche (vía
-GitHub Actions, ver .github/workflows/capturar_precios.yml) y hace:
-
-  1. Lee la watchlist desde la tabla `medicamentos` de Supabase.
-  2. Para cada medicamento, busca en las 3 farmacias registradas en
-     scrapers/registry.py (misma función que usa el comparador web).
-  3. Guarda cada resultado como una fila NUEVA en `precios` (nunca
-     sobrescribe — así se construye el histórico).
-  4. Registra en `scrapes_log` si cada farmacia respondió o no, para
-     poder distinguir después "no había oferta" de "el scraper falló".
-
-Uso local (para probarlo antes de programarlo):
-    pip install -r requirements.txt
-    playwright install chromium
-    python scripts/capturar_precios.py
-
-En producción lo dispara GitHub Actions, no se corre a mano.
-"""
+"""Actualización de precios."""
 
 from __future__ import annotations
 
@@ -57,8 +37,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 # ---------------------------------------------------------------------------
-# Helpers: obtener-o-crear farmacia / presentación por nombre
-# (evita que el script se caiga si falta una fila de catálogo)
+# Utilidades
 # ---------------------------------------------------------------------------
 _cache_farmacias: dict[str, int] = {}
 _cache_presentaciones: dict[str, int] = {}

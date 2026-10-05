@@ -1,37 +1,4 @@
-"""
-FarmaPulse - scrapers/mifarma.py
-
-Búsqueda en vivo en Mifarma vía su índice público de Algolia.
-
-Mismo patrón que scrapers/inkafarma.py: Mifarma (también del grupo
-InRetail) expone su propio índice de Algolia usado por el buscador
-público del sitio. Endpoint, application-id e index descubiertos
-inspeccionando (DevTools -> Network -> Fetch/XHR) la petición que
-mifarma.com.pe dispara al buscar un producto en su buscador público.
-
-La "X-Algolia-API-Key" usada aquí es una API key de tipo "search-only"
-de Algolia: igual que en Inkafarma, es la misma que recibe el navegador
-de cualquier visitante anónimo del sitio, no expira ni requiere sesión,
-y por diseño de Algolia es segura para vivir en un frontend público.
-
-Reglas que este módulo respeta siempre (idénticas a inkafarma.py):
-  1. Solo consume este endpoint público de búsqueda, no endpoints
-     internos/admin.
-  2. Sin técnicas de evasión de detección (sin fingerprinting de TLS,
-     sin rotación de IP, sin spoofing de huellas de navegador más allá
-     de un User-Agent normal e identificable).
-  3. Caché y límite de frecuencia (heredados de ScraperFarmacia) para
-     no generar carga indebida sobre la infraestructura de
-     Mifarma/Algolia.
-
-Diferencia de formato respecto a Inkafarma: el endpoint de Mifarma es
-de un solo índice (".../indexes/products/query") en vez del endpoint
-multi-índice (".../indexes/*/queries") que usa Inkafarma, así que el
-payload y el parseo de la respuesta son ligeramente distintos, pero el
-JSON de cada "hit" trae los mismos campos (priceList, pricePromo,
-presentation, composition, brand/laboratory, isGeneric, etc.), así que
-se reutiliza la misma lógica de estimación de precio unitario.
-"""
+"""Consulta de productos de Mifarma."""
 
 import json
 import re
@@ -48,7 +15,7 @@ class MifarmaScraper(ScraperFarmacia):
     url_base = "https://www.mifarma.com.pe"
 
     algolia_app_id = "O74E6QKJ1F"
-    algolia_search_key = "f14e7e2c350bd2c9bf3b5ff078ccd82f"  # key pública search-only
+    algolia_search_key = "f14e7e2c350bd2c9bf3b5ff078ccd82f"
     algolia_index = "products"
     algolia_max_resultados = 50
 

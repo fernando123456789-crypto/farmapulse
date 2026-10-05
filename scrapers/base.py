@@ -1,22 +1,4 @@
-"""
-FarmaPulse - scrapers/base.py
-
-Clase base para todos los scrapers de farmacias (patrón Strategy).
-
-Cada farmacia es una "estrategia" intercambiable. Lo único que cada una
-debe implementar es CÓMO conseguir los resultados de una búsqueda
-(`_buscar_en_vivo`) — puede ser una llamada directa a una API pública
-que el propio sitio usa (como Inkafarma, vía su índice de Algolia) o,
-si un sitio no expone nada así y solo renderiza con JavaScript, usando
-el helper `_renderizar_con_playwright` de más abajo. Todo lo demás
-(caché, rate-limiting, manejo de errores) vive UNA sola vez acá.
-
-Para agregar una farmacia nueva:
-    1. Crear scrapers/nueva_farmacia.py con una clase que herede de
-       ScraperFarmacia e implemente _buscar_en_vivo(termino).
-    2. Agregarla a la lista en scrapers/registry.py.
-    Nada más. app.py y los templates no cambian.
-"""
+"""Interfaz común de consulta de productos."""
 
 from __future__ import annotations
 

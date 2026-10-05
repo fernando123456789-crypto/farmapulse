@@ -1,31 +1,4 @@
-"""
-FarmaPulse - scrapers/inkafarma.py
-
-Búsqueda en vivo en Inkafarma vía su índice público de Algolia.
-
-Cómo se descubrió este endpoint: inspeccionando (con DevTools -> Network,
-usando el propio navegador del usuario final) las peticiones que el
-sitio inkafarma.pe dispara al buscar un producto en su buscador
-público. No es un endpoint privado ni de admin: es el mismo que usa
-cualquier visitante anónimo del sitio.
-
-La "X-Algolia-API-Key" usada aquí es una API key de tipo "search-only"
-de Algolia: por diseño de Algolia, este tipo de key es segura para
-vivir en el frontend público de cualquier sitio, no expira ni requiere
-sesión — es exactamente la misma que el navegador de cualquier persona
-usa al visitar inkafarma.pe. No es una credencial privada ni una que
-vaya a expirar como sí ocurre con tokens de sesión.
-
-Reglas que este módulo respeta siempre:
-  1. Solo consume este endpoint público de búsqueda, no endpoints
-     internos/admin.
-  2. Sin técnicas de evasión de detección (sin fingerprinting de TLS,
-     sin rotación de IP, sin spoofing de huellas de navegador más allá
-     de un User-Agent normal e identificable).
-  3. Caché y límite de frecuencia (heredados de ScraperFarmacia) para
-     no generar carga indebida sobre la infraestructura de
-     Inkafarma/Algolia.
-"""
+"""Consulta de productos de Inkafarma."""
 
 import re
 
@@ -41,7 +14,7 @@ class InkafarmaScraper(ScraperFarmacia):
     url_base = "https://inkafarma.pe"
 
     algolia_app_id = "15W622LAQ4"
-    algolia_search_key = "ccd8cbda203928003f7fe6f44ddbfc3a"  # key pública search-only
+    algolia_search_key = "ccd8cbda203928003f7fe6f44ddbfc3a"
     algolia_index = "products"
     algolia_max_resultados = 50
 

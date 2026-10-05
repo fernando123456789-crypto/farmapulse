@@ -1,8 +1,3 @@
-/* =========================================================
-   FarmaPulse - auth.js
-   Módulo de autenticación (Supabase Auth vía endpoints Flask).
-   ========================================================= */
-
 (function () {
   "use strict";
 
@@ -190,7 +185,7 @@
     if (token) {
       try {
         await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}`, ...csrfHeaders() } });
-      } catch { /* best-effort */ }
+      } catch {  }
     }
   });
 
@@ -201,7 +196,7 @@
       const respuesta = await fetch("/api/auth/sesion", { headers: { Authorization: `Bearer ${sesion.access_token}` } });
       const data = await respuesta.json();
       if (!data.autenticado) borrarSesion();
-    } catch { /* sin conexión: se mantiene la sesión local optimistamente */ }
+    } catch {  }
     actualizarNavbar();
   }
 

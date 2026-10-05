@@ -1,15 +1,4 @@
-"""
-FarmaPulse - scrapers/registry.py
-
-Registro central de farmacias activas. Para sumar una farmacia nueva:
-    1. Crear scrapers/nueva_farmacia.py con una clase que herede de
-       ScraperFarmacia (ver scrapers/base.py).
-    2. Importarla e instanciarla en SCRAPERS_ACTIVOS más abajo.
-
-Nada en app.py ni en los templates necesita tocarse: /api/buscar y la
-tabla del comparador ya son dinámicos respecto a cuántas/qué farmacias
-haya en esta lista.
-"""
+"""Registro de proveedores de productos."""
 
 from .farmaciauniversal import FarmaciaUniversalScraper
 from .inkafarma import InkafarmaScraper

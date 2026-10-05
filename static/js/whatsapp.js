@@ -1,10 +1,3 @@
-/* =========================================================
-   FarmaPulse - whatsapp.js
-   Botón flotante de WhatsApp con mensaje preconfigurado.
-   Lee el número/mensaje desde /api/config (no hardcodeado en el
-   frontend) para que sea fácil de cambiar desde el backend/.env.
-   ========================================================= */
-
 (function () {
   "use strict";
 
@@ -23,7 +16,6 @@
         mensaje = data.whatsapp_mensaje || mensaje;
       }
     } catch {
-      // Si /api/config falla, se usa el valor por defecto de arriba.
     }
 
     const enlace = document.createElement("a");

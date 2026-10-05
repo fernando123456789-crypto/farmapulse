@@ -1,24 +1,4 @@
-"""
-FarmaPulse - Servidor Flask
-----------------------------
-Red compartida para medicamentos de confianza.
-
-Este servidor expone:
-  - Vistas HTML (landing y comparador)
-  - API `/api/buscar` que consulta en vivo las farmacias registradas en
-    scrapers/registry.py (Inkafarma, Mifarma, ...). Agregar una farmacia
-    nueva no requiere tocar este archivo — ver scrapers/base.py.
-  - Autenticación con Supabase Auth (correo + contraseña).
-  - Botón de WhatsApp configurable.
-  - Algoritmo de ordenamiento/ahorro por precio unitario.
-  - Integración con Supabase para guardar/consultar "listas de receta".
-
-Ejecutar:
-    pip install -r requirements.txt
-    playwright install chromium   # una sola vez
-    python app.py
-Luego abrir http://127.0.0.1:5000
-"""
+"""Aplicación web FarmaPulse."""
 
 import os
 import random
@@ -70,9 +50,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 WHATSAPP_NUMERO = os.getenv("WHATSAPP_NUMERO", "51963119803")
 
 # ---------------------------------------------------------------------------
-# Cliente Supabase (con manejo de errores si las credenciales no son válidas
-# o si el paquete no puede inicializar la conexión — la app debe seguir
-# funcionando en modo "solo comparador" aunque Supabase falle).
 # ---------------------------------------------------------------------------
 supabase_client = None
 try:
@@ -88,19 +65,11 @@ except Exception as exc:  # pragma: no cover
     print(f"[FarmaPulse] No se pudo inicializar Supabase: {exc}")
     supabase_client = None
 
-# Almacenamiento en memoria como fallback si Supabase no está disponible
-# (permite probar la app end-to-end sin credenciales reales).
 _MEMORIA_RECETAS = []
 
 # ---------------------------------------------------------------------------
 # Autenticación (Supabase Auth) — correo + contraseña, "lo clásico"
 # ---------------------------------------------------------------------------
-# Se llama directo a la REST API de Supabase Auth (no al cliente Python
-# global de arriba) porque ese cliente se comparte entre TODAS las
-# peticiones del servidor Flask; guardar ahí la sesión de un usuario la
-# mezclaría con la de otro usuario concurrente. Con la REST API cada
-# petición lleva su propio token: es el patrón correcto para un backend
-# multiusuario.
 AUTH_TIMEOUT = 8
 
 
@@ -160,8 +129,7 @@ def auth_obtener_usuario(access_token: str) -> dict:
 
 
 def sesion_opcional(f):
-    """Adjunta g.usuario si hay un Bearer token válido. Nunca bloquea la
-    petición: sin token (o inválido), la ruta sigue en modo invitado."""
+    """Obtiene la identidad de la petición."""
     @wraps(f)
     def envoltura(*args, **kwargs):
         g.usuario = None
@@ -177,9 +145,7 @@ def sesion_opcional(f):
 
 
 def sesion_requerida(f):
-    """Igual que sesion_opcional, pero BLOQUEA la petición si no hay un
-    Bearer token válido. Se usa en las rutas que ahora exigen login
-    (buscar, guardar receta, ver historial)."""
+    """Valida la identidad de la petición."""
     @wraps(f)
     def envoltura(*args, **kwargs):
         g.usuario = None
@@ -467,14 +433,7 @@ def api_auth_sesion():
 @app.route("/api/buscar", methods=["POST"])
 @sesion_requerida
 def api_buscar():
-    """
-    Busca `producto` en todas las farmacias activas (ver
-    scrapers/registry.py — hoy Inkafarma y Mifarma; agregar una más no
-    requiere tocar esta ruta). Si ninguna farmacia devuelve resultados
-    (por ejemplo, mientras se completan los selectores de un scraper),
-    se usan datos de demostración para que el frontend nunca se quede
-    sin nada que mostrar — queda marcado como "fuente": "demo".
-    """
+    """Consulta productos."""
     payload = request.get_json(silent=True) or {}
 
     termino = (payload.get("producto") or payload.get("termino") or "").strip()
@@ -509,11 +468,7 @@ def api_buscar():
 @app.route("/api/receta/guardar", methods=["POST"])
 @sesion_requerida
 def api_receta_guardar():
-    """
-    Guarda un medicamento en "Mi Receta". Ahora requiere sesión iniciada
-    (ver sesion_requerida) — ya no se acepta el id anónimo de invitado.
-    Sin Supabase, va a memoria local.
-    """
+    """Guarda un producto en la receta."""
     body = request.get_json(silent=True) or {}
 
     requeridos = ["medicamento", "farmacia", "precio_unitario"]
@@ -548,7 +503,6 @@ def api_receta_guardar():
             return jsonify({"ok": True, "fuente": "supabase", "data": resultado.data})
         except Exception as exc:
             print(f"[FarmaPulse] Error al guardar en Supabase: {exc}")
-            # Continúa hacia el fallback en memoria en vez de fallar la request.
 
     _MEMORIA_RECETAS.append(registro)
     return jsonify({"ok": True, "fuente": "memoria_local", "data": registro})
@@ -557,7 +511,7 @@ def api_receta_guardar():
 @app.route("/api/receta/historial", methods=["GET"])
 @sesion_requerida
 def api_receta_historial():
-    """Historial de "Mi Receta": ahora requiere sesión iniciada."""
+    """Consulta la receta del usuario."""
     usuario_id = g.usuario["id"]
 
     if supabase_client:

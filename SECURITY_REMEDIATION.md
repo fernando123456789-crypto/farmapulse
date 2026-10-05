@@ -40,8 +40,9 @@ las instancias originales. No se suprimen reglas de ZAP para obtener cero alerta
    usuario. Rechazar una query no borra el registro del servidor/proxy de una URL
    ya enviada: configurar redacción de logs y revisar la evidencia original.
 10. **Suspicious Comments.** Comentarios de plantillas convertidos a comentarios
-    Jinja, ausentes del HTML servido. Los comentarios de JS revisados describen
-    funcionamiento, sin credenciales. **Pendiente comparar el comentario exacto
+    Jinja, ausentes del HTML servido. Se retiraron los comentarios de los scripts
+    propios servidos al navegador y se redujeron las explicaciones de arquitectura,
+    almacenamiento y proveedores en Python. **Pendiente comparar el comentario exacto
     del informe**; no se declara eliminada una evidencia desconocida.
 11. **Modern Web Application.** Informativa: describe una interfaz con JavaScript.
     No se elimina funcionalidad para ocultar esta detección. Reescanear con AJAX

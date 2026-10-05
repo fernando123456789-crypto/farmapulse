@@ -1,14 +1,6 @@
-/* =========================================================
-   FarmaPulse - main.js
-   Lógica de filtros en cascada, consumo de /api/buscar,
-   renderizado dinámico de la tabla comparativa y manejo
-   del carrito de compra + checkout por WhatsApp.
-   ========================================================= */
-
 (function () {
   "use strict";
 
-  // Solo se ejecuta la lógica del comparador si estamos en esa vista.
   const tablaResultados = document.getElementById("tablaResultados");
   if (!tablaResultados) return;
 
@@ -25,13 +17,11 @@
   const panelAhorro = document.getElementById("panelAhorro");
   const ahorroTexto = document.getElementById("ahorroTexto");
 
-  // Carrito
   const miCarritoContenedor = document.getElementById("miCarrito");
   const carritoTotalMini = document.getElementById("carritoTotalMini");
   const carritoContador = document.getElementById("carritoContador");
   const btnComprar = document.getElementById("btnComprar");
 
-  // Checkout (modal)
   const modalCheckout = document.getElementById("modalCheckout");
   const checkoutLista = document.getElementById("checkoutLista");
   const checkoutSubtotal = document.getElementById("checkoutSubtotal");
@@ -45,8 +35,6 @@
 
   const CLAVE_CARRITO = "farmapulse_carrito";
 
-  // Config del servicio (número de WhatsApp, zona/tiempo/costo de delivery).
-  // Se pide una sola vez a /api/config para no hardcodear nada en el JS.
   let configServicio = {
     whatsapp_numero: "51963119803",
     zona_delivery: ["San Borja", "San Luis", "La Victoria"],
@@ -54,10 +42,6 @@
     costo_delivery: 5,
   };
 
-  // -------------------------------------------------------
-  // Carrito: persistido en localStorage para que sobreviva a un
-  // refresh de página (misma idea que el id anónimo de auth.js).
-  // -------------------------------------------------------
   function cargarCarrito() {
     try {
       const crudo = localStorage.getItem(CLAVE_CARRITO);
@@ -73,8 +57,6 @@
 
   let carrito = cargarCarrito();
 
-  // Clave estable para identificar "el mismo producto" entre distintas
-  // búsquedas (el id que manda el backend es un uuid nuevo cada vez).
   function claveProducto(item) {
     return [item.medicamento, item.farmacia, item.presentacion, item.precio_empaque]
       .map((v) => String(v || "").toLowerCase().trim())
@@ -93,9 +75,6 @@
     renderizarCarrito();
     actualizarBotonesFilaSegunCarrito();
 
-    // Se registra también en el historial de Supabase (best-effort, no
-    // bloquea el carrito si Supabase no está disponible o falla).
-    // Requiere sesión iniciada — ya no hay modo invitado en el backend.
     if (window.FarmaPulseAuth?.estaAutenticado()) {
       fetch("/api/receta/guardar", {
         method: "POST",
@@ -162,13 +141,6 @@
     });
   }
 
-  // -------------------------------------------------------
-  // Poblar select de Departamentos / Provincias / Distritos
-  // Como el servicio hoy solo cubre Lima > Lima > 3 distritos,
-  // se autoseleccionan Departamento y Provincia (no tiene sentido
-  // pedirle al usuario que elija entre una sola opción) y solo
-  // queda por elegir el Distrito.
-  // -------------------------------------------------------
   function poblarDepartamentos() {
     selectDepartamento.innerHTML = '<option value="">-- Seleccione --</option>';
     const departamentos = Object.keys(ubicaciones);
@@ -241,9 +213,6 @@
 
   poblarDepartamentos();
 
-  // -------------------------------------------------------
-  // Helpers de formato
-  // -------------------------------------------------------
   function formatearSoles(valor) {
     const numero = Number(valor || 0);
     return "S/ " + numero.toFixed(2);
@@ -255,9 +224,6 @@
     return div.innerHTML;
   }
 
-  // -------------------------------------------------------
-  // Renderizado de la tabla comparativa
-  // -------------------------------------------------------
   function botonCarritoHtml(item) {
     const enCarrito = estaEnCarrito(item);
     const clase = enCarrito ? "btn-accion btn-quitar btn-carrito-toggle" : "btn-accion btn-agregar btn-carrito-toggle";
@@ -351,7 +317,6 @@
     } else {
       agregarAlCarrito(item);
     }
-    // Refresca este botón puntual sin tener que re-renderizar toda la tabla.
     btn.outerHTML = botonCarritoHtml(item);
     const nuevoBtn = tablaResultados.querySelector(
       `[data-medicamento="${CSS.escape(item.medicamento)}"][data-farmacia="${CSS.escape(item.farmacia)}"]`
@@ -359,10 +324,6 @@
     if (nuevoBtn) nuevoBtn.addEventListener("click", () => alternarCarritoDesdeBoton(nuevoBtn));
   }
 
-  // Tras una nueva búsqueda, o al agregar/quitar desde la tarjeta del
-  // carrito, hay que refrescar el estado visual (Agregar/Quitar) de
-  // todos los botones de la tabla que correspondan a productos ya en
-  // el carrito.
   function actualizarBotonesFilaSegunCarrito() {
     tablaResultados.querySelectorAll(".btn-carrito-toggle").forEach((btn) => {
       const item = itemDesdeBoton(btn);
@@ -375,9 +336,6 @@
     });
   }
 
-  // -------------------------------------------------------
-  // Panel de "Máximo ahorro encontrado"
-  // -------------------------------------------------------
   function renderizarAhorro(ahorro) {
     if (!ahorro) {
       panelAhorro.classList.add("hidden");
@@ -392,10 +350,6 @@
     panelAhorro.classList.remove("hidden");
   }
 
-  // -------------------------------------------------------
-  // Bloqueo por sesión: FarmaPulse ahora exige login para
-  // buscar y para guardar en "Mi Receta".
-  // -------------------------------------------------------
   function mostrarBloqueoLogin() {
     const modalLogin = document.getElementById("modalLogin");
     if (modalLogin) modalLogin.classList.remove("hidden");
@@ -429,9 +383,6 @@
   window.addEventListener("farmapulse:sesion-cambiada", actualizarEstadoAccesoComparador);
   actualizarEstadoAccesoComparador();
 
-  // -------------------------------------------------------
-  // Llamada a la API /api/buscar
-  // -------------------------------------------------------
   async function buscarMedicamentos() {
     if (!window.FarmaPulseAuth?.estaAutenticado()) {
       mostrarBloqueoLogin();
@@ -501,9 +452,6 @@
       </tr>`;
   });
 
-  // -------------------------------------------------------
-  // Checkout: abrir modal con el resumen del carrito
-  // -------------------------------------------------------
   function construirMensajeWhatsapp() {
     const lineas = carrito.map((item, i) => {
       const precio = item.precio_empaque != null ? item.precio_empaque : item.precio_unitario;
@@ -579,9 +527,6 @@
     }
   });
 
-  // -------------------------------------------------------
-  // Cargar configuración del servicio (WhatsApp + zona/tiempo/costo)
-  // -------------------------------------------------------
   async function cargarConfigServicio() {
     try {
       const respuesta = await fetch("/api/config");

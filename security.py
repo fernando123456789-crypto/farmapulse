@@ -1,11 +1,4 @@
-"""
-FarmaPulse - security.py
-------------------------
-Módulo de seguridad centralizado para validación de contraseñas y otros
-controles de seguridad.
-
-Commit: contraseña-segura
-"""
+"""Validación de entradas."""
 
 import re
 from typing import Tuple
