@@ -162,8 +162,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script>
-  // Datos de ubicaciones renderizados desde Flask (Departamento -> Provincia -> Distrito)
-  window.__UBICACIONES__ = {{ ubicaciones | tojson }};
-</script>
+<!-- Datos de ubicaciones desde Flask (bloque JSON: no es script ejecutable, cumple la CSP) -->
+<script type="application/json" id="ubicaciones-data">{{ ubicaciones | tojson }}</script>
+<script src="{{ url_for('static', filename='js/ubicaciones.js') }}"></script>
 {% endblock %}

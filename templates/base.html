@@ -6,23 +6,8 @@
 <title>{% block title %}FarmaPulse - Tu Red Compartida para Medicamentos de Confianza{% endblock %}</title>
 <meta name="description" content="FarmaPulse: compara precios de medicamentos en farmacias del Perú y ahorra en tus tratamientos.">
 
-<!-- Tailwind CSS (CDN) -->
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: {
-          fpDark: '#0d3b4f',
-          fpDark2: '#12495f',
-          fpGreen: '#1fa971',
-          fpGreenDark: '#158a5a',
-          fpMint: '#e7f6ef',
-        }
-      }
-    }
-  }
-</script>
+<!-- Tailwind CSS (compilado localmente, sin CDN) -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}">
 
 <!-- FontAwesome (CDN) -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">

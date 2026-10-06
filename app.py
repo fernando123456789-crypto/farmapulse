@@ -396,6 +396,7 @@ def api_config():
 # Rutas - Autenticación (Supabase Auth: correo + contraseña)
 # ---------------------------------------------------------------------------
 @app.route("/api/auth/registro", methods=["POST"])
+@csrf.exempt
 @limiter.limit("3 per hour")  # 🔒 Prevenir spam/fuerza bruta en registro
 def api_auth_registro():
     if not _supabase_configurado():
@@ -428,6 +429,7 @@ def api_auth_registro():
 
 
 @app.route("/api/auth/login", methods=["POST"])
+@csrf.exempt
 @limiter.limit("5 per 15 minutes")  # 🔒 Prevenir fuerza bruta en login
 def api_auth_login():
     if not _supabase_configurado():
@@ -456,6 +458,7 @@ def api_auth_login():
 
 
 @app.route("/api/auth/logout", methods=["POST"])
+@csrf.exempt
 def api_auth_logout():
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer ") and _supabase_configurado():
@@ -476,6 +479,7 @@ def api_auth_sesion():
 
 
 @app.route("/api/buscar", methods=["GET", "POST"])
+@csrf.exempt
 @sesion_requerida
 def api_buscar():
     """
@@ -521,6 +525,7 @@ def api_buscar():
 
 
 @app.route("/api/receta/guardar", methods=["POST"])
+@csrf.exempt
 @sesion_requerida
 def api_receta_guardar():
     """
