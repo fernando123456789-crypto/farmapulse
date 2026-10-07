@@ -480,7 +480,7 @@ def api_auth_sesion():
 
 @app.route("/api/buscar", methods=["GET", "POST"])
 @csrf.exempt
-@sesion_requerida
+@sesion_opcional  # buscar es libre; el login solo se recomienda en el frontend
 def api_buscar():
     """
     Busca `producto` en todas las farmacias activas (ver

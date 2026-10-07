@@ -95,7 +95,7 @@
 
     // Se registra también en el historial de Supabase (best-effort, no
     // bloquea el carrito si Supabase no está disponible o falla).
-    // Requiere sesión iniciada — ya no hay modo invitado en el backend.
+    // Solo se guarda en Supabase si hay sesión; sin sesión queda en el carrito local.
     if (window.FarmaPulseAuth?.estaAutenticado()) {
       fetch("/api/receta/guardar", {
         method: "POST",
@@ -393,51 +393,59 @@
   }
 
   // -------------------------------------------------------
-  // Bloqueo por sesión: FarmaPulse ahora exige login para
-  // buscar y para guardar en "Mi Receta".
+  // Sugerencia (NO obligatoria) de iniciar sesión.
+  // Buscar es libre para todos. Después de una búsqueda, a quien no
+  // tiene sesión se le muestra un aviso que se cierra con la X, con
+  // "Seguir sin cuenta", tocando fuera de la ventana o con Esc.
   // -------------------------------------------------------
-  function mostrarBloqueoLogin() {
-    const modalLogin = document.getElementById("modalLogin");
-    if (modalLogin) modalLogin.classList.remove("hidden");
-    loadingState.classList.add("hidden");
-    tablaResultados.innerHTML = `
-      <tr>
-        <td colspan="7" class="text-center text-slate-400 py-14">
-          <i class="fa-solid fa-lock text-3xl mb-3 block"></i>
-          Debes iniciar sesión para comparar precios y guardar tu receta.
-        </td>
-      </tr>`;
+  // true  = el aviso sale después de CADA búsqueda
+  // false = sale solo una vez por visita (por pestaña del navegador)
+  const SUGERIR_LOGIN_EN_CADA_BUSQUEDA = false;
+  const CLAVE_SUGERENCIA_VISTA = "farmapulse_sugerencia_login_vista";
+
+  const modalSugerencia = document.getElementById("modalSugerenciaLogin");
+
+  function cerrarSugerenciaLogin() {
+    if (modalSugerencia) modalSugerencia.classList.add("hidden");
   }
 
-  function actualizarEstadoAccesoComparador() {
-    const autenticado = !!window.FarmaPulseAuth?.estaAutenticado();
-    btnBuscar.disabled = !autenticado;
-    btnBuscar.classList.toggle("opacity-50", !autenticado);
-    btnBuscar.classList.toggle("cursor-not-allowed", !autenticado);
-    btnBuscar.title = autenticado ? "" : "Inicia sesión para buscar";
-    if (!autenticado) {
-      tablaResultados.innerHTML = `
-        <tr>
-          <td colspan="7" class="text-center text-slate-400 py-14">
-            <i class="fa-solid fa-lock text-3xl mb-3 block"></i>
-            Inicia sesión para comparar precios entre farmacias.
-          </td>
-        </tr>`;
+  function mostrarSugerenciaLogin() {
+    if (!modalSugerencia) return;
+    if (window.FarmaPulseAuth?.estaAutenticado()) return;
+
+    if (!SUGERIR_LOGIN_EN_CADA_BUSQUEDA) {
+      try {
+        if (sessionStorage.getItem(CLAVE_SUGERENCIA_VISTA)) return;
+        sessionStorage.setItem(CLAVE_SUGERENCIA_VISTA, "1");
+      } catch {
+        /* sin sessionStorage: se muestra igual */
+      }
     }
+    modalSugerencia.classList.remove("hidden");
   }
 
-  window.addEventListener("farmapulse:sesion-cambiada", actualizarEstadoAccesoComparador);
-  actualizarEstadoAccesoComparador();
+  function abrirModalAuthDesdeSugerencia(idModal) {
+    cerrarSugerenciaLogin();
+    document.getElementById(idModal)?.classList.remove("hidden");
+  }
+
+  document.querySelectorAll("[data-cerrar-sugerencia]").forEach((el) =>
+    el.addEventListener("click", cerrarSugerenciaLogin)
+  );
+  document.getElementById("btnSugerenciaIniciarSesion")?.addEventListener("click", () =>
+    abrirModalAuthDesdeSugerencia("modalLogin")
+  );
+  document.getElementById("btnSugerenciaCrearCuenta")?.addEventListener("click", () =>
+    abrirModalAuthDesdeSugerencia("modalRegistro")
+  );
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") cerrarSugerenciaLogin();
+  });
 
   // -------------------------------------------------------
   // Llamada a la API /api/buscar
   // -------------------------------------------------------
   async function buscarMedicamentos() {
-    if (!window.FarmaPulseAuth?.estaAutenticado()) {
-      mostrarBloqueoLogin();
-      return;
-    }
-
     loadingState.classList.remove("hidden");
     panelAhorro.classList.add("hidden");
 
@@ -456,17 +464,13 @@
         body: JSON.stringify(payload),
       });
 
-      if (respuesta.status === 401) {
-        loadingState.classList.add("hidden");
-        mostrarBloqueoLogin();
-        return;
-      }
-
       if (!respuesta.ok) throw new Error("Error de red al consultar /api/buscar");
 
       const data = await respuesta.json();
       renderizarResultados(data.resultados);
       renderizarAhorro(data.ahorro_maximo);
+      // Los resultados ya están a la vista; el aviso aparece apenas después.
+      setTimeout(mostrarSugerenciaLogin, 600);
     } catch (error) {
       console.error("[FarmaPulse] Error en la búsqueda:", error);
       tablaResultados.innerHTML = `

@@ -1,0 +1,30 @@
+<!-- Aviso (no obligatorio) para recomendar iniciar sesión después de buscar.
+     Se cierra con la X, "Seguir sin cuenta", tocando fuera o con Esc. -->
+<div id="modalSugerenciaLogin" class="hidden fixed inset-0 z-40 flex items-center justify-center p-4"
+     role="dialog" aria-modal="true" aria-labelledby="tituloSugerenciaLogin">
+  <div class="absolute inset-0 bg-fpDark/50" data-cerrar-sugerencia></div>
+  <div class="relative bg-white w-full max-w-sm rounded-2xl shadow-2xl p-7 fp-fade-in">
+    <button type="button" data-cerrar-sugerencia aria-label="Cerrar"
+            class="absolute top-3 right-4 text-slate-400 hover:text-slate-600">
+      <i class="fa-solid fa-xmark text-lg"></i>
+    </button>
+    <div class="w-11 h-11 rounded-xl bg-fpMint flex items-center justify-center mb-3">
+      <i class="fa-solid fa-bookmark text-fpGreen text-lg"></i>
+    </div>
+    <h2 id="tituloSugerenciaLogin" class="text-lg font-extrabold text-fpDark mb-1">Te recomendamos iniciar sesión</h2>
+    <p class="text-slate-500 text-sm mb-5">
+      Con tu cuenta puedes guardar tu receta y ver tu historial de búsquedas.
+      Si prefieres, puedes seguir comparando precios sin cuenta.
+    </p>
+    <div class="flex flex-col gap-2">
+      <button type="button" id="btnSugerenciaIniciarSesion"
+              class="w-full bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-5 py-2.5">
+        Iniciar sesión
+      </button>
+      <div class="flex items-center justify-between text-sm pt-1">
+        <button type="button" id="btnSugerenciaCrearCuenta" class="text-fpGreenDark font-semibold hover:underline">Crear cuenta</button>
+        <button type="button" data-cerrar-sugerencia class="text-slate-400 hover:text-slate-600">Seguir sin cuenta</button>
+      </div>
+    </div>
+  </div>
+</div>
