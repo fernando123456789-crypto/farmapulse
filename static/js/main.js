@@ -82,7 +82,8 @@
   function cargarCarrito() {
     try {
       const crudo = localStorage.getItem(CLAVE_CARRITO);
-      return crudo ? JSON.parse(crudo) : [];
+      const items = crudo ? JSON.parse(crudo) : [];
+      return Array.isArray(items) ? items.filter((item) => item && typeof item === "object") : [];
     } catch {
       return [];
     }
@@ -273,7 +274,7 @@
   function escaparHtml(texto) {
     const div = document.createElement("div");
     div.textContent = texto == null ? "" : String(texto);
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   checkoutDni.addEventListener("input", () => {
@@ -493,6 +494,9 @@
   // Renderizado de la tabla comparativa
   // -------------------------------------------------------
   function botonCarritoHtml(item) {
+    if (item.comprable === false) {
+      return '<span class="text-xs text-slate-500">No disponible para compra</span>';
+    }
     const enCarrito = estaEnCarrito(item);
     const clase = enCarrito ? "btn-accion btn-quitar btn-carrito-toggle" : "btn-accion btn-agregar btn-carrito-toggle";
     const icono = enCarrito ? "fa-solid fa-cart-arrow-down" : "fa-solid fa-cart-plus";
@@ -508,6 +512,7 @@
         data-precio-unitario="${item.precio_unitario}"
         data-precio-empaque="${item.precio_empaque}"
         data-tipo="${item.tipo}"
+        data-cotizacion="${escaparHtml(item.cotizacion || "")}"
         data-en-carrito="${enCarrito}">
         <i class="${icono}"></i> ${texto}
       </button>`;
@@ -575,6 +580,7 @@
       precio_unitario: parseFloat(btn.dataset.precioUnitario),
       precio_empaque: parseFloat(btn.dataset.precioEmpaque),
       tipo: btn.dataset.tipo,
+      cotizacion: btn.dataset.cotizacion || "",
     };
   }
 
@@ -752,8 +758,14 @@
     checkoutEmail.textContent = `Comprobante para: ${window.FarmaPulseAuth.obtenerCorreoActivo() || "tu correo de cuenta"}`;
     btnPagarMercadoPago.disabled = pagoSinConfirmar;
     if (!pagoSinConfirmar) btnPagarMercadoPago.innerHTML = '<i class="fa-solid fa-lock"></i> Continuar con Mercado Pago';
+    btnPagarMercadoPago.classList.remove("hidden");
     if (ordenPendiente && pagoPendiente) iniciarSeguimientoPago(ordenPendiente, pagoPendiente);
+    renderizarResumenCheckout();
+    modalCheckout.classList.remove("hidden");
+    window.requestAnimationFrame(prepararMapaEntrega);
+  }
 
+  function renderizarResumenCheckout() {
     checkoutLista.innerHTML = carrito
       .map((item) => {
         const precio = item.precio_empaque != null ? item.precio_empaque : item.precio_unitario;
@@ -773,8 +785,6 @@
     checkoutSubtotal.textContent = formatearSoles(subtotal);
     checkoutDelivery.textContent = formatearSoles(costoEnvio);
     checkoutTotal.textContent = formatearSoles(subtotal + costoEnvio);
-    modalCheckout.classList.remove("hidden");
-    window.requestAnimationFrame(prepararMapaEntrega);
   }
 
   async function cerrarCheckout() {
@@ -795,6 +805,7 @@
     tarjetaMercadoPago.classList.add("hidden");
     estadoMercadoPago.classList.add("hidden");
     btnPagarMercadoPago.textContent = "Continuar con Mercado Pago";
+    btnPagarMercadoPago.classList.remove("hidden");
   }
 
   [checkoutDni, checkoutApellidos, checkoutNombres, checkoutTelefono, checkoutDistrito, checkoutDireccion]
@@ -881,11 +892,6 @@
       checkoutError.classList.remove("hidden");
       return;
     }
-    if (carrito.some((item) => !item.cotizacion)) {
-      checkoutError.textContent = "Actualiza los precios del carrito antes de pagar.";
-      checkoutError.classList.remove("hidden");
-      return;
-    }
     if (!window.MercadoPago || !window.FarmaPulseMercadoPago) {
       checkoutError.textContent = "No se pudo cargar Mercado Pago. Recarga la página.";
       checkoutError.classList.remove("hidden");
@@ -901,6 +907,24 @@
       direccion: checkoutDireccion.value.trim(), place_id: checkoutPlaceId.value,
       direccion_validacion: checkoutDireccionValidacion.value, productos: carrito.map((item) => ({ ...item })),
     };
+    async function actualizarPreciosCarrito() {
+      const anterior = JSON.stringify(carrito);
+      const response = await fetch("/api/checkout/cotizar", {
+        method: "POST", headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
+        body: JSON.stringify({ productos: datosCheckout.productos }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "No pudimos preparar tu compra. Intenta nuevamente.");
+      if (versionActual !== versionCheckout || anterior !== JSON.stringify(carrito)) {
+        throw new Error("El carrito cambió mientras preparábamos el pago. Revisa el resumen y continúa.");
+      }
+      carrito = data.productos;
+      datosCheckout.productos = carrito.map((item) => ({ ...item }));
+      guardarCarritoStorage(carrito);
+      renderizarCarrito();
+      actualizarBotonesFilaSegunCarrito();
+      renderizarResumenCheckout();
+    }
     async function prepararOrden() {
       const response = await fetch("/api/checkout/orden", {
         method: "POST", headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
@@ -911,6 +935,7 @@
       return data;
     }
     try {
+      await actualizarPreciosCarrito();
       let orden = await prepararOrden();
       if (!checkoutMercadoPago) checkoutMercadoPago = new window.FarmaPulseMercadoPago(configServicio.mercado_pago_public_key);
       tarjetaMercadoPago.classList.remove("hidden");
@@ -953,7 +978,7 @@
         checkoutError.textContent = "Mercado Pago no pudo completar esta acción. Revisa los datos de la tarjeta e inténtalo nuevamente.";
         checkoutError.classList.remove("hidden");
       });
-      btnPagarMercadoPago.textContent = "Actualizar datos del pago";
+      btnPagarMercadoPago.classList.add("hidden");
     } catch (error) {
       checkoutError.textContent = error.message;
       checkoutError.classList.remove("hidden");

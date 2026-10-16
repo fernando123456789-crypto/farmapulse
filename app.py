@@ -580,6 +580,70 @@ def _datos_checkout(items: list):
     return productos, subtotal, delivery, subtotal + delivery
 
 
+def _firmar_precio_producto(producto):
+    precio = producto.get("precio_empaque")
+    if precio is None:
+        precio = producto.get("precio_unitario")
+    precio = Decimal(str(precio)).quantize(Decimal("0.01"))
+    if not precio.is_finite() or precio <= 0:
+        raise ValueError("Precio no disponible")
+    datos = {"medicamento": producto["medicamento"], "farmacia": producto["farmacia"],
+             "presentacion": producto.get("presentacion") or "presentación única", "precio": str(precio)}
+    return {**producto, "presentacion": datos["presentacion"], "precio_empaque": float(precio),
+            "cotizacion": _COTIZACIONES.dumps(datos), "comprable": True}
+
+
+def _identificador_producto(producto):
+    return tuple(" ".join(unicodedata.normalize("NFC", str(producto.get(campo) or defecto)).casefold().split())
+                 for campo, defecto in (("medicamento", ""), ("farmacia", ""), ("presentacion", "presentación única")))
+
+
+@app.route("/api/checkout/cotizar", methods=["POST"])
+@csrf.exempt
+@limiter.limit("5 per minute")
+@sesion_requerida
+def api_checkout_cotizar():
+    body = request.get_json(silent=True)
+    items = body.get("productos") if isinstance(body, dict) else None
+    if (not isinstance(items, list) or not 1 <= len(items) <= 20
+            or any(not isinstance(item, dict) or any(
+                not isinstance(item.get(campo), str) or not 1 <= len(item[campo].strip()) <= 250
+                for campo in ("medicamento", "farmacia"))
+                or (item.get("presentacion") is not None and (
+                    not isinstance(item["presentacion"], str) or len(item["presentacion"]) > 250))
+                for item in items)):
+        return jsonify({"ok": False, "error": "El carrito no es válido"}), 400
+    actualizados, consultas = [], {}
+    for item in items:
+        try:
+            token = item.get("cotizacion", "")
+            if not isinstance(token, str):
+                raise ValueError
+            datos = _COTIZACIONES.loads(token, max_age=1800)
+            precio = Decimal(datos["precio"])
+            if not precio.is_finite() or precio <= 0 or _identificador_producto(datos) != _identificador_producto(item):
+                raise ValueError
+            actualizados.append({**item, "precio_empaque": float(precio), "comprable": True})
+            continue
+        except (BadSignature, SignatureExpired, ValueError, KeyError, TypeError, InvalidOperation):
+            pass
+        clave = (item["medicamento"].strip(), item["farmacia"].strip())
+        if clave not in consultas:
+            consultas[clave] = buscar_en_farmacias(clave[0], farmacia_filtro=clave[1])
+        coincidencias = [p for p in consultas[clave] if _identificador_producto(p) == _identificador_producto(item)]
+        try:
+            if not coincidencias or len({str(p.get("precio_empaque") if p.get("precio_empaque") is not None
+                                               else p.get("precio_unitario")) for p in coincidencias}) != 1:
+                raise ValueError
+            actualizados.append(_firmar_precio_producto(coincidencias[0]))
+        except (KeyError, TypeError, ValueError, InvalidOperation):
+            return jsonify({"ok": False, "error": f"{item['medicamento']} ya no está disponible para compra en esa presentación. Retíralo del carrito o elige otra opción."}), 409
+    subtotal = sum((Decimal(_COTIZACIONES.loads(p["cotizacion"])["precio"]) for p in actualizados), Decimal("0.00"))
+    delivery = Decimal(str(COSTO_DELIVERY)).quantize(Decimal("0.01"))
+    return jsonify({"ok": True, "productos": actualizados, "subtotal": str(subtotal),
+                    "delivery": str(delivery), "total": str(subtotal + delivery)})
+
+
 def _normalizar_texto(texto: str) -> str:
     sin_acentos = unicodedata.normalize("NFKD", texto)
     return "".join(caracter for caracter in sin_acentos if not unicodedata.combining(caracter)).casefold().strip()
@@ -1142,16 +1206,13 @@ def api_buscar():
         )
 
     resultados_ordenados, ahorro_maximo = _calcular_ahorro_y_ordenar(resultados)
-    for producto in resultados_ordenados:
-        if fuente != "farmacias":
-            continue
-        cotizacion = {
-            "medicamento": producto["medicamento"],
-            "farmacia": producto["farmacia"],
-            "presentacion": producto.get("presentacion") or "presentación única",
-            "precio": str(Decimal(str(producto.get("precio_empaque") or producto["precio_unitario"])).quantize(Decimal("0.01"))),
-        }
-        producto["cotizacion"] = _COTIZACIONES.dumps(cotizacion)
+    for indice, producto in enumerate(resultados_ordenados):
+        producto["comprable"] = False
+        if fuente == "farmacias":
+            try:
+                resultados_ordenados[indice] = _firmar_precio_producto(producto)
+            except (KeyError, TypeError, ValueError, InvalidOperation):
+                producto.pop("cotizacion", None)
 
     return jsonify({
         "ok": True,
