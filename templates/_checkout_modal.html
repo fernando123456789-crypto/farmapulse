@@ -81,7 +81,25 @@
         <button type="button" id="btnPagarMercadoPago" class="w-full inline-flex items-center justify-center gap-2 bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">
           <i class="fa-solid fa-lock"></i> Continuar con Mercado Pago
         </button>
-        <div id="mercadoPagoTarjeta" class="hidden" aria-label="Pago con tarjeta en Mercado Pago"></div>
+        <div id="mercadoPagoTarjeta" class="hidden" aria-label="Pago con tarjeta en Mercado Pago">
+          <form id="mercadoPagoFormulario" class="pago-tarjeta" novalidate>
+            <div class="pago-tarjeta-campo">
+              <span id="pagoNumeroEtiqueta">Número de tarjeta</span>
+              <div id="mercadoPagoNumero" class="pago-tarjeta-input" aria-labelledby="pagoNumeroEtiqueta"></div>
+            </div>
+            <div class="pago-tarjeta-fila">
+              <div class="pago-tarjeta-campo">
+                <span id="pagoVencimientoEtiqueta">Fecha de expiración</span>
+                <div id="mercadoPagoVencimiento" class="pago-tarjeta-input" aria-labelledby="pagoVencimientoEtiqueta"></div>
+              </div>
+              <div class="pago-tarjeta-campo">
+                <span id="pagoSeguridadEtiqueta">CVV/CVC</span>
+                <div id="mercadoPagoSeguridad" class="pago-tarjeta-input" aria-labelledby="pagoSeguridadEtiqueta"></div>
+              </div>
+            </div>
+            <button id="mercadoPagoPagar" class="pago-tarjeta-boton" type="submit" disabled>Confirmar pago</button>
+          </form>
+        </div>
         <div id="mercadoPagoEstado" class="hidden" aria-label="Estado del pago en Mercado Pago"></div>
         <p class="text-xs text-slate-400 text-center">Recibirás el comprobante en el correo de tu cuenta al confirmarse el pago.</p>
       </div>

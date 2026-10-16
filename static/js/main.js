@@ -977,7 +977,7 @@
       }, () => {
         checkoutError.textContent = "Mercado Pago no pudo completar esta acción. Revisa los datos de la tarjeta e inténtalo nuevamente.";
         checkoutError.classList.remove("hidden");
-      });
+      }, orden.pagador);
       btnPagarMercadoPago.classList.add("hidden");
     } catch (error) {
       checkoutError.textContent = error.message;

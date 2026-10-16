@@ -36,6 +36,12 @@ class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
     def pay(self, **changes):
         return self.client.post("/api/checkout/pagar", json={**self.payload, **changes}, headers=self.headers)
 
+    def test_order_returns_verified_identity_for_card_tokenization(self):
+        order = self.order()
+        self.assertEqual(order.json["pagador"], {
+            "nombre": self.body["nombres"] + " " + self.body["apellidos"], "dni": self.body["dni"],
+        })
+
     def test_approved_payment_and_duplicate_only_charge_once(self):
         self.payment.assert_not_called()
         first, repeated = self.pay(transaction_amount=99999), self.pay()

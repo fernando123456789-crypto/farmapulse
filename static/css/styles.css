@@ -165,3 +165,16 @@ body {
   height: 540px;
   border: 0;
 }
+
+.pago-tarjeta { display: grid; gap: 14px; margin: 0; }
+.pago-tarjeta-fila { display: contents; }
+.pago-tarjeta-campo { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(0, 1.5fr); align-items: center; gap: 12px; min-width: 0; }
+.pago-tarjeta-campo > span { font-size: 13px; font-weight: 600; color: #475569; }
+.pago-tarjeta-input { height: 46px; min-width: 0; overflow: hidden; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; }
+.pago-tarjeta-input:focus-within { border-color: #19a974; box-shadow: 0 0 0 2px #19a97420; }
+.pago-tarjeta-input iframe { display: block; width: 100%; height: 100%; border: 0; }
+.pago-tarjeta-boton { height: 46px; width: 100%; padding: 0 16px; border: 0; border-radius: 10px; background: #19a974; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.pago-tarjeta-boton:disabled { opacity: .55; cursor: default; }
+@media (max-width: 520px) {
+  .pago-tarjeta-campo { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+}

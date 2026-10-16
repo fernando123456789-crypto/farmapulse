@@ -1,6 +1,6 @@
 # Pagos con Mercado Pago
 
-El checkout acepta tarjetas mediante Card Payment Brick de Mercado Pago. El servidor crea y consulta pagos con la API oficial, verifica el importe y la referencia de la compra y envía el comprobante únicamente después de una aprobación.
+El checkout acepta tarjetas mediante los campos seguros del SDK de Mercado Pago. El servidor crea y consulta pagos con la API oficial, verifica el importe y la referencia de la compra y envía el comprobante únicamente después de una aprobación.
 
 Configura las credenciales de tu aplicación en el entorno del servidor:
 

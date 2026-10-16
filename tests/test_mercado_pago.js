@@ -1,43 +1,74 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const calls = [];
-const controllers = [];
-const builder = {
-  async create(type, target, settings) {
-    calls.push({ type, target, settings });
-    const controller = { removed: false, async unmount() { this.removed = true; } };
-    controllers.push(controller);
-    return controller;
-  },
+const fields = [];
+const elements = new Map();
+const element = (id) => {
+  if (!elements.has(id)) elements.set(id, {
+    textContent: "", children: [], listeners: {},
+    replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); },
+    addEventListener(name, handler) { this.listeners[name] = handler; },
+    removeEventListener(name, handler) { if (this.listeners[name] === handler) delete this.listeners[name]; },
+  });
+  return elements.get(id);
 };
-let receivedKey;
-const container = { textContent: "", children: [], replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); } };
+let receivedKey, tokenData, receivedPayment, errors = 0, tokens = 0;
 const root = { MercadoPago: class {
-  constructor(key, options) { receivedKey = key; assert.equal(options.locale, "es-PE"); }
-  bricks() { return builder; }
+  constructor(key, options) {
+    receivedKey = key;
+    assert.equal(options.locale, "es-PE");
+    this.fields = {
+      create(type, options) {
+        const field = { type, options, listeners: {},
+          on(event, handler) { this.listeners[event] = handler; },
+          mount(target) { this.target = target; }, update() {},
+          async unmount() { this.removed = true; },
+        };
+        fields.push(field);
+        return field;
+      },
+      async createCardToken(data) { tokens++; tokenData = data; return { id: "test-token" }; },
+    };
+  }
+  async getPaymentMethods() { return { results: [{ id: "visa", status: "active", payment_type_id: "credit_card" }] }; }
 }, document: {
-  getElementById() { return container; },
+  getElementById: element,
   createElement(type) { assert.equal(type, "iframe"); return { removed: false, remove() { this.removed = true; } }; },
 } };
 vm.runInNewContext(fs.readFileSync("static/js/mercado-pago.js", "utf8"), { window: root, URL });
 
 (async () => {
   const checkout = new root.FarmaPulseMercadoPago("TEST-public");
-  const submit = async (data) => data;
-  await checkout.mount(15, "test@example.invalid", submit, () => {});
+  await checkout.mount(15, "test@example.invalid", async (data, extra) => { receivedPayment = { data, extra }; }, () => errors++, { nombre: "JUAN GARCIA", dni: "12345678" });
   assert.equal(receivedKey, "TEST-public");
-  assert.equal(calls[0].type, "cardPayment");
-  assert.equal(calls[0].settings.initialization.amount, 15);
-  assert.equal(calls[0].settings.initialization.payer.email, "test@example.invalid");
-  assert.equal(calls[0].settings.callbacks.onSubmit, submit);
+  assert.deepEqual(fields.map((field) => field.type), ["cardNumber", "expirationDate", "securityCode"]);
+  assert.equal(element("mercadoPagoPagar").disabled, true);
+  await fields[0].listeners.binChange({ bin: "40091753" });
+  for (const field of fields) field.listeners.validityChange({ errorMessages: [] });
+  assert.equal(element("mercadoPagoPagar").disabled, false);
+  assert.equal(element("mercadoPagoPagar").textContent, "Confirmar pago · S/ 15.00");
+  const submit = element("mercadoPagoFormulario").listeners.submit;
+  const first = submit({ preventDefault() {} });
+  await submit({ preventDefault() {} });
+  await first;
+  assert.equal(tokens, 1);
+  assert.equal(tokenData.cardholderName, "JUAN GARCIA");
+  assert.equal(tokenData.identificationNumber, "12345678");
+  assert.equal(receivedPayment.data.token, "test-token");
+  assert.equal(receivedPayment.data.installments, 1);
+  assert.equal(receivedPayment.extra.paymentTypeId, "credit_card");
+  assert.equal(receivedPayment.data.cardNumber, undefined);
+  assert.equal(receivedPayment.data.securityCode, undefined);
   await checkout.showStatus({ challenge_url: "https://www.mercadopago.com.pe/auth/test" });
-  const frame = container.children[0];
+  const frame = element("mercadoPagoEstado").children[0];
   assert.equal(frame.src, "https://www.mercadopago.com.pe/auth/test");
-  assert.equal(frame.title, "Verificación de tu tarjeta");
   await assert.rejects(checkout.showStatus({ challenge_url: "https://attacker.example/challenge" }));
   assert.ok(frame.removed);
   await checkout.unmount();
-  assert.ok(controllers.every((controller) => controller.removed));
-  console.log("OK: formulario de Mercado Pago, verificación bancaria y limpieza de componentes.");
+  assert.ok(fields.every((field) => field.removed));
+  assert.equal(element("mercadoPagoFormulario").listeners.submit, undefined);
+  await submit({ preventDefault() {} });
+  assert.equal(tokens, 1);
+  assert.equal(errors, 0);
+  console.log("OK: tres campos seguros, identidad reutilizada, un solo pago y bloqueo de envíos duplicados.");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

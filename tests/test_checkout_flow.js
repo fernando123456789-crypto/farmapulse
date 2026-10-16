@@ -43,7 +43,7 @@ async function run() {
     FarmaPulseAuth: { estaAutenticado: () => true, headersAuth: () => ({}), obtenerCorreoActivo: () => "buyer@example.invalid" },
     MercadoPago: class {},
     FarmaPulseMercadoPago: class {
-      async mount(amount, email, submit) { mountedAmount = amount; submitCard = submit; assert.equal(email, "buyer@example.invalid"); }
+      async mount(amount, email, submit, onError, identity) { assert.equal(identity.nombre, "JUAN GARCIA"); mountedAmount = amount; submitCard = submit; assert.equal(email, "buyer@example.invalid"); }
       async unmount() {}
     },
     requestAnimationFrame() {}, setTimeout() {},
@@ -62,7 +62,7 @@ async function run() {
       if (url === "/api/checkout/orden") {
         assert.equal(body.productos[0].cotizacion, "signed-price");
         assert.equal(body.productos[0].precio_empaque, 12.5);
-        return response({ ok: true, orden_id: "order", orden_firma: "signed-order", amount: 1750 });
+        return response({ ok: true, orden_id: "order", orden_firma: "signed-order", amount: 1750, pagador: { nombre: "JUAN GARCIA", dni: "12345678" } });
       }
       if (url === "/api/checkout/pagar") return response({ ok: true, pago_confirmado: true, estado: "aprobado", comprobante_enviado: true, pago_id: "PAY-test" });
       throw new Error("Petición inesperada: " + url);

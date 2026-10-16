@@ -830,7 +830,8 @@ def api_checkout_orden():
     orden_id = f"fp_{uuid.uuid4().hex}"
     firma = _COTIZACIONES.dumps({**cliente, "id": orden_id, "amount": centimos, "email": email,
                                "identidad_validada": True, "usuario_id": g.usuario.get("id")})
-    return jsonify({"ok": True, "orden_id": orden_id, "orden_firma": firma, "amount": centimos})
+    return jsonify({"ok": True, "orden_id": orden_id, "orden_firma": firma, "amount": centimos,
+                    "pagador": {"nombre": f"{cliente['nombres']} {cliente['apellidos']}", "dni": dni}})
 
 
 @app.route("/api/checkout/pagar", methods=["POST"])
@@ -1324,7 +1325,5 @@ def add_security_headers(response):
 # Punto de entrada
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # debug=False en producción (previene exposición del debugger interactivo de Werkzeug)
-    # Solo usar debug=True en desarrollo LOCAL
-    debug_mode = os.getenv("FLASK_ENV") == "development"
-    app.run(host="127.0.0.1", port=5000, debug=debug_mode)
+    from local_https import run_local_server
+    run_local_server(app)
