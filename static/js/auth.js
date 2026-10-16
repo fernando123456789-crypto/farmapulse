@@ -8,6 +8,8 @@
 
   const CLAVE_SESION = "farmapulse_sesion";
   const CLAVE_USUARIO_ANONIMO = "farmapulse_usuario_id";
+  const CLAVE_RECUPERACION = "farmapulse_recuperacion";
+  let sesionRecuperacion = null;
 
   function obtenerSesion() {
     try {
@@ -57,9 +59,13 @@
   const modalLogin = document.getElementById("modalLogin");
   const modalRegistro = document.getElementById("modalRegistro");
   const modalEliminarCuenta = document.getElementById("modalEliminarCuenta");
+  const modalRecuperarCuenta = document.getElementById("modalRecuperarCuenta");
+  const modalNuevaContrasena = document.getElementById("modalNuevaContrasena");
   const formLogin = document.getElementById("formLogin");
   const formRegistro = document.getElementById("formRegistro");
   const formEliminarCuenta = document.getElementById("formEliminarCuenta");
+  const formRecuperarCuenta = document.getElementById("formRecuperarCuenta");
+  const formNuevaContrasena = document.getElementById("formNuevaContrasena");
 
   if (!bloqueInvitado || !bloqueAutenticado) return;
 
@@ -74,6 +80,13 @@
 
   function abrirModal(modal) { if (modal) modal.classList.remove("hidden"); }
   function cerrarModal(modal) { if (modal) modal.classList.add("hidden"); }
+
+  function limpiarRecuperacion() {
+    sesionRecuperacion = null;
+    try { sessionStorage.removeItem(CLAVE_RECUPERACION); } catch { /* almacenamiento no disponible */ }
+    formNuevaContrasena?.reset();
+    cerrarModal(modalNuevaContrasena);
+  }
 
   function mostrarErrorFormulario(form, mensaje, esExito) {
     const contenedor = form.querySelector("[data-error]");
@@ -131,28 +144,38 @@
   }
 
   async function procesarConfirmacionCorreo() {
-    if (!window.location.hash) return;
-
     const parametros = new URLSearchParams(window.location.hash.slice(1));
-    const accessToken = parametros.get("access_token");
-    const refreshToken = parametros.get("refresh_token");
+    let tipo = parametros.get("type");
+    let accessToken = parametros.get("access_token");
+    let refreshToken = parametros.get("refresh_token");
     const errorCodigo = parametros.get("error_code");
     const errorDescripcion = parametros.get("error_description");
 
     if (errorCodigo || errorDescripcion) {
       window.history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`);
+      limpiarRecuperacion();
       abrirModal(modalLogin);
       mostrarErrorFormulario(
         formLogin,
         errorCodigo === "otp_expired"
-          ? "El enlace de confirmación venció o ya fue utilizado. Solicita uno nuevo e inténtalo otra vez."
-          : "No se pudo confirmar el correo. Solicita un nuevo enlace de confirmación.",
+          ? "El enlace venció o ya fue utilizado. Solicita un nuevo correo de confirmación o recuperación."
+          : "No se pudo validar el enlace. Solicita un nuevo correo de confirmación o recuperación.",
         false,
       );
-      return;
+      return true;
     }
 
-    if (!accessToken || !refreshToken || parametros.get("type") !== "signup") return;
+    if (!window.location.hash) {
+      try {
+        const pendiente = JSON.parse(sessionStorage.getItem(CLAVE_RECUPERACION) || "null");
+        if (pendiente?.access_token && pendiente?.refresh_token) {
+          accessToken = pendiente.access_token;
+          refreshToken = pendiente.refresh_token;
+          tipo = "recovery";
+        }
+      } catch { limpiarRecuperacion(); }
+    }
+    if (!accessToken || !refreshToken || !["signup", "recovery"].includes(tipo)) return false;
 
     window.history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`);
     try {
@@ -160,22 +183,114 @@
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const data = await leerRespuestaJson(respuesta);
-      if (!data.autenticado || !data.usuario) {
-        throw new Error("El correo se confirmó, pero no se pudo iniciar la sesión automáticamente. Inicia sesión para continuar.");
+      if (!respuesta.ok || !data.autenticado || !data.usuario) {
+        throw new Error(tipo === "recovery"
+          ? "El enlace de recuperación venció o no es válido. Solicita otro desde «Olvidé mi contraseña»."
+          : "El correo se confirmó, pero no se pudo iniciar la sesión automáticamente. Inicia sesión para continuar.");
       }
 
+      if (tipo === "recovery") {
+        borrarSesion();
+        actualizarNavbar();
+        window.dispatchEvent(new CustomEvent("farmapulse:sesion-cambiada"));
+        sesionRecuperacion = { access_token: accessToken, refresh_token: refreshToken, usuario: data.usuario };
+        try { sessionStorage.setItem(CLAVE_RECUPERACION, JSON.stringify(sesionRecuperacion)); } catch { /* se conserva en memoria */ }
+        [modalLogin, modalRegistro, modalRecuperarCuenta, modalEliminarCuenta].forEach(cerrarModal);
+        limpiarErrorFormulario(formNuevaContrasena);
+        abrirModal(modalNuevaContrasena);
+        formNuevaContrasena.querySelector('[name="password"]').focus();
+        return true;
+      }
+      limpiarRecuperacion();
       guardarSesion({ access_token: accessToken, refresh_token: refreshToken, usuario: data.usuario });
       actualizarNavbar();
       window.dispatchEvent(new CustomEvent("farmapulse:sesion-cambiada"));
       mostrarAvisoConfirmacion("Correo confirmado. Tu sesión ya está iniciada.");
     } catch (error) {
+      limpiarRecuperacion();
       abrirModal(modalLogin);
       mostrarErrorFormulario(formLogin, error.message, false);
     }
+    return true;
   }
 
   btnAbrirLogin?.addEventListener("click", () => abrirModal(modalLogin));
   btnAbrirRegistro?.addEventListener("click", () => abrirModal(modalRegistro));
+
+  document.querySelectorAll("[data-recuperar-contrasena]").forEach((button) => {
+    button.addEventListener("click", () => {
+      formRecuperarCuenta.querySelector('[name="email"]').value = formLogin.querySelector('[name="email"]').value.trim();
+      limpiarErrorFormulario(formRecuperarCuenta);
+      cerrarModal(modalLogin);
+      abrirModal(modalRecuperarCuenta);
+    });
+  });
+
+  formRecuperarCuenta?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = formRecuperarCuenta.querySelector('button[type="submit"]');
+    if (button.disabled) return;
+    limpiarErrorFormulario(formRecuperarCuenta);
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "Solicitando enlace…";
+    try {
+      const response = await fetch("/api/auth/recuperar-contrasena", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: formRecuperarCuenta.querySelector('[name="email"]').value.trim() }),
+      });
+      const data = await leerRespuestaJson(response);
+      if (!response.ok || !data.ok) throw new Error(data.error || "No se pudo solicitar la recuperación");
+      mostrarErrorFormulario(formRecuperarCuenta, data.mensaje, true);
+    } catch (error) {
+      mostrarErrorFormulario(formRecuperarCuenta, error.message, false);
+    } finally {
+      button.textContent = "Espera un minuto para volver a solicitarlo";
+      window.setTimeout(() => { button.disabled = false; button.textContent = original; }, 60000);
+    }
+  });
+
+  document.querySelectorAll("[data-cancelar-recuperacion]").forEach((button) => {
+    button.addEventListener("click", () => { limpiarRecuperacion(); abrirModal(modalLogin); });
+  });
+
+  formNuevaContrasena?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = formNuevaContrasena.querySelector('button[type="submit"]');
+    if (button.disabled) return;
+    limpiarErrorFormulario(formNuevaContrasena);
+    if (!sesionRecuperacion) {
+      mostrarErrorFormulario(formNuevaContrasena, "Solicita otro enlace desde «Olvidé mi contraseña».", false);
+      return;
+    }
+    const password = formNuevaContrasena.querySelector('[name="password"]').value;
+    const repetida = formNuevaContrasena.querySelector('[name="password_confirmation"]').value;
+    const error = validarContrasena(password) || (password !== repetida ? "Las contraseñas no coinciden." : "");
+    if (error) { mostrarErrorFormulario(formNuevaContrasena, error, false); return; }
+    const sesion = sesionRecuperacion;
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "Guardando contraseña…";
+    try {
+      const response = await fetch("/api/auth/nueva-contrasena", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${sesion.access_token}` },
+        body: JSON.stringify({ password }),
+      });
+      const data = await leerRespuestaJson(response);
+      if (!response.ok || !data.ok) throw new Error(data.error || "No se pudo actualizar la contraseña");
+      if (sesionRecuperacion !== sesion) return;
+      guardarSesion({ ...sesion, usuario: data.usuario });
+      limpiarRecuperacion();
+      actualizarNavbar();
+      window.dispatchEvent(new CustomEvent("farmapulse:sesion-cambiada"));
+      mostrarAvisoConfirmacion("Contraseña actualizada. Tu sesión ya está iniciada.");
+    } catch (error) {
+      if (sesionRecuperacion === sesion) mostrarErrorFormulario(formNuevaContrasena, error.message, false);
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
 
   document.querySelectorAll("[data-reenviar-confirmacion]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -208,13 +323,14 @@
       cerrarModal(modalLogin);
       cerrarModal(modalRegistro);
       cerrarModal(modalEliminarCuenta);
+      cerrarModal(modalRecuperarCuenta);
     })
   );
   document.querySelectorAll("[data-cambiar-a-registro]").forEach((el) =>
     el.addEventListener("click", () => { cerrarModal(modalLogin); abrirModal(modalRegistro); })
   );
   document.querySelectorAll("[data-cambiar-a-login]").forEach((el) =>
-    el.addEventListener("click", () => { cerrarModal(modalRegistro); abrirModal(modalLogin); })
+    el.addEventListener("click", () => { cerrarModal(modalRegistro); cerrarModal(modalRecuperarCuenta); abrirModal(modalLogin); })
   );
 
   btnEliminarCuenta?.addEventListener("click", () => {
@@ -356,6 +472,9 @@
     actualizarNavbar();
   }
 
-  procesarConfirmacionCorreo();
-  verificarSesionVigente();
+  async function iniciarAutenticacion() {
+    const enlaceProcesado = await procesarConfirmacionCorreo();
+    if (!enlaceProcesado) await verificarSesionVigente();
+  }
+  iniciarAutenticacion();
 })();

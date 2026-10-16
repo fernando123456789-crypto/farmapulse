@@ -199,7 +199,13 @@ class AuthEmailError(ValueError):
         self.status = status
 
 
-def _leer_respuesta_correo_auth(respuesta):
+class AuthSessionError(ValueError):
+    def __init__(self, message, status=401):
+        super().__init__(message)
+        self.status = status
+
+
+def _leer_respuesta_correo_auth(respuesta, proposito="confirmación"):
     try:
         datos = respuesta.json()
         if not isinstance(datos, dict):
@@ -209,12 +215,12 @@ def _leer_respuesta_correo_auth(respuesta):
     if respuesta.status_code >= 400:
         code = datos.get("error_code") or datos.get("code")
         if respuesta.status_code == 429 or code in {"over_email_send_rate_limit", "over_request_rate_limit"}:
-            raise AuthEmailError("El servicio de confirmación alcanzó su límite de envíos. Espera antes de solicitar otro correo.", 429)
+            raise AuthEmailError("El servicio de correo alcanzó su límite de envíos. Espera antes de solicitar otro correo.", 429)
         if code in {"email_address_not_authorized", "email_address_invalid"}:
-            raise AuthEmailError("El servicio de correo no pudo enviar la confirmación a esa dirección. Contacta a soporte.", 503)
+            raise AuthEmailError(f"El servicio de correo no pudo enviar la {proposito} a esa dirección. Contacta a soporte.", 503)
         if respuesta.status_code >= 500:
-            raise AuthEmailError("No se pudo enviar el correo de confirmación. Intenta nuevamente más tarde.")
-        raise AuthEmailError("No se pudo completar la solicitud de confirmación. Revisa el correo e intenta nuevamente.", 400)
+            raise AuthEmailError(f"No se pudo enviar el correo de {proposito}. Intenta nuevamente más tarde.")
+        raise AuthEmailError(f"No se pudo completar la solicitud de {proposito}. Revisa el correo e intenta nuevamente.", 400)
     return datos
 
 
@@ -254,6 +260,14 @@ def auth_reenviar_confirmacion(email: str, redirect_to: str) -> dict:
     return _leer_respuesta_correo_auth(respuesta)
 
 
+def auth_recuperar_contrasena(email: str, redirect_to: str) -> dict:
+    respuesta = requests.post(
+        _auth_url("/recover"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
+        json={"email": email}, timeout=AUTH_TIMEOUT,
+    )
+    return _leer_respuesta_correo_auth(respuesta, "recuperación")
+
+
 def auth_iniciar_sesion(email: str, password: str) -> dict:
     respuesta = requests.post(
         _auth_url("/token?grant_type=password"), headers=_auth_headers(),
@@ -261,12 +275,50 @@ def auth_iniciar_sesion(email: str, password: str) -> dict:
     )
     try:
         datos = respuesta.json()
-    except requests.exceptions.JSONDecodeError as exc:
+        if not isinstance(datos, dict):
+            raise ValueError
+    except ValueError as exc:
         raise requests.RequestException(
             "El servicio de autenticación devolvió una respuesta inválida"
         ) from exc
     if respuesta.status_code >= 400:
-        raise ValueError(datos.get("error_description") or datos.get("msg") or "Credenciales inválidas")
+        code = datos.get("error_code") or datos.get("code")
+        if respuesta.status_code == 429:
+            raise AuthSessionError("Demasiados intentos de acceso. Espera antes de intentarlo otra vez.", 429)
+        if respuesta.status_code >= 500:
+            raise AuthSessionError("El servicio de acceso no está disponible. Intenta nuevamente más tarde.", 502)
+        if code == "email_not_confirmed":
+            raise AuthSessionError("Confirma tu correo antes de iniciar sesión. Puedes solicitar otro enlace de confirmación.", 403)
+        raise AuthSessionError("El correo o la contraseña no coinciden. Si no recuerdas tu clave, pulsa «Olvidé mi contraseña».")
+    if not datos.get("access_token") or not isinstance(datos.get("user"), dict):
+        raise requests.RequestException("Respuesta incompleta del servicio de autenticación")
+    return datos
+
+
+def auth_actualizar_contrasena(access_token: str, password: str) -> dict:
+    respuesta = requests.put(
+        _auth_url("/user"), headers=_auth_headers(access_token),
+        json={"password": password}, timeout=AUTH_TIMEOUT,
+    )
+    try:
+        datos = respuesta.json()
+        if not isinstance(datos, dict):
+            raise ValueError
+    except ValueError as exc:
+        raise requests.RequestException("Respuesta inválida del servicio de autenticación") from exc
+    if respuesta.status_code >= 400:
+        code = datos.get("error_code") or datos.get("code")
+        if code == "same_password":
+            raise AuthSessionError("Elige una contraseña diferente a la anterior.", 400)
+        if code == "weak_password":
+            raise AuthSessionError("La contraseña no cumple los requisitos de seguridad.", 400)
+        if respuesta.status_code == 429:
+            raise AuthSessionError("Espera antes de volver a cambiar la contraseña.", 429)
+        if respuesta.status_code >= 500:
+            raise AuthSessionError("No se pudo actualizar la contraseña. Intenta nuevamente más tarde.", 502)
+        raise AuthSessionError("El enlace o la sesión venció. Solicita un nuevo correo de recuperación.")
+    if not datos.get("id"):
+        raise requests.RequestException("Respuesta incompleta del servicio de autenticación")
     return datos
 
 
@@ -1125,6 +1177,53 @@ def api_auth_reenviar_confirmacion():
     return jsonify({"ok": True, "mensaje": "Si el correo tiene una cuenta pendiente de confirmación, recibirás un nuevo enlace. Si ya la confirmaste, inicia sesión."})
 
 
+@app.route("/api/auth/recuperar-contrasena", methods=["POST"])
+@csrf.exempt
+@limiter.limit("1 per minute")
+@limiter.limit("3 per hour")
+def api_auth_recuperar_contrasena():
+    if not _supabase_configurado():
+        return jsonify({"ok": False, "error": "El servicio de autenticación no está disponible"}), 503
+    body = request.get_json(silent=True)
+    email = body.get("email") if isinstance(body, dict) else None
+    if not isinstance(email, str) or not validar_email(email)[0]:
+        return jsonify({"ok": False, "error": "Ingresa un correo válido"}), 400
+    email = email.strip().lower()
+    mensaje = "Si el correo tiene una cuenta habilitada, recibirás un enlace para crear una nueva contraseña. Revisa también Spam."
+    if not _acceso_bloqueado({"email": email}):
+        try:
+            auth_recuperar_contrasena(email, _url_confirmacion_correo())
+        except AuthEmailError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), exc.status
+        except requests.RequestException:
+            return jsonify({"ok": False, "error": "No se pudo contactar el servicio de autenticación"}), 502
+    return jsonify({"ok": True, "mensaje": mensaje})
+
+
+@app.route("/api/auth/nueva-contrasena", methods=["POST"])
+@csrf.exempt
+@limiter.limit("5 per minute")
+@sesion_requerida
+def api_auth_nueva_contrasena():
+    body = request.get_json(silent=True)
+    password = body.get("password") if isinstance(body, dict) else None
+    if not isinstance(password, str):
+        return jsonify({"ok": False, "error": "Ingresa una contraseña válida"}), 400
+    valida, mensaje = validar_contrasena(password)
+    if not valida:
+        return jsonify({"ok": False, "error": mensaje}), 400
+    token = request.headers["Authorization"].removeprefix("Bearer ").strip()
+    try:
+        usuario = auth_actualizar_contrasena(token, password)
+        if usuario["id"] != g.usuario["id"]:
+            raise requests.RequestException("La cuenta recibida no coincide con la sesión")
+    except AuthSessionError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), exc.status
+    except requests.RequestException:
+        return jsonify({"ok": False, "error": "No se pudo actualizar la contraseña. Intenta nuevamente."}), 502
+    return jsonify({"ok": True, "usuario": {"id": usuario["id"], "email": usuario.get("email")}})
+
+
 @app.route("/api/auth/login", methods=["POST"])
 @csrf.exempt
 @limiter.limit("5 per 15 minutes")  # 🔒 Prevenir fuerza bruta en login
@@ -1132,17 +1231,20 @@ def api_auth_login():
     if not _supabase_configurado():
         return jsonify({"ok": False, "error": "Supabase no está configurado en el servidor"}), 503
 
-    body = request.get_json(silent=True) or {}
-    email = (body.get("email") or "").strip().lower()
-    password = body.get("password") or ""
-
-    if not email or not password:
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("email"), str) or not isinstance(body.get("password"), str):
+        return jsonify({"ok": False, "error": "Ingresa correo y contraseña"}), 400
+    email = body["email"].strip().lower()
+    password = body["password"]
+    if not validar_email(email)[0] or not password:
         return jsonify({"ok": False, "error": "Ingresa correo y contraseña"}), 400
     if _acceso_bloqueado({"email": email}):
         return _respuesta_acceso_bloqueado()
 
     try:
         datos = auth_iniciar_sesion(email, password)
+    except AuthSessionError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), exc.status
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 401
     except requests.RequestException:
