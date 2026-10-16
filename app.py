@@ -48,7 +48,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 from flask_wtf.csrf import CSRFProtect
-from security import validar_contrasena
+from security import validar_contrasena, validar_email
 from identity_security import IdentitySecurity
 from delivery_location import district_for_point
 from payment_ledger import PaymentLedger
@@ -91,6 +91,8 @@ def manejar_error_seguridad_identidad(error):
 @app.errorhandler(HTTPException)
 def manejar_error_http_api(error: HTTPException):
     if request.path.startswith("/api/"):
+        if error.code == 429 and request.path.startswith("/api/auth/"):
+            return jsonify({"ok": False, "error": "Alcanzaste el límite de intentos. Espera antes de volver a solicitarlo."}), 429
         return jsonify({"ok": False, "error": error.description}), error.code
     return error
 
@@ -191,6 +193,36 @@ _MEMORIA_RECETAS = []
 AUTH_TIMEOUT = 8
 
 
+class AuthEmailError(ValueError):
+    def __init__(self, message, status=502):
+        super().__init__(message)
+        self.status = status
+
+
+def _leer_respuesta_correo_auth(respuesta):
+    try:
+        datos = respuesta.json()
+        if not isinstance(datos, dict):
+            raise ValueError
+    except ValueError as exc:
+        raise requests.RequestException("Respuesta inválida del servicio de autenticación") from exc
+    if respuesta.status_code >= 400:
+        code = datos.get("error_code") or datos.get("code")
+        if respuesta.status_code == 429 or code in {"over_email_send_rate_limit", "over_request_rate_limit"}:
+            raise AuthEmailError("El servicio de confirmación alcanzó su límite de envíos. Espera antes de solicitar otro correo.", 429)
+        if code in {"email_address_not_authorized", "email_address_invalid"}:
+            raise AuthEmailError("El servicio de correo no pudo enviar la confirmación a esa dirección. Contacta a soporte.", 503)
+        if respuesta.status_code >= 500:
+            raise AuthEmailError("No se pudo enviar el correo de confirmación. Intenta nuevamente más tarde.")
+        raise AuthEmailError("No se pudo completar la solicitud de confirmación. Revisa el correo e intenta nuevamente.", 400)
+    return datos
+
+
+def _url_confirmacion_correo():
+    base_url = os.getenv("APP_BASE_URL", "").strip().rstrip("/") or request.host_url.rstrip("/")
+    return f"{base_url}/comparador"
+
+
 def _auth_url(ruta: str) -> str:
     return f"{SUPABASE_URL.rstrip('/')}/auth/v1{ruta}"
 
@@ -211,15 +243,15 @@ def auth_registrar(email: str, password: str, redirect_to: str) -> dict:
         _auth_url("/signup"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
         json={"email": email, "password": password}, timeout=AUTH_TIMEOUT,
     )
-    try:
-        datos = respuesta.json()
-    except requests.exceptions.JSONDecodeError as exc:
-        raise requests.RequestException(
-            "El servicio de autenticación devolvió una respuesta inválida"
-        ) from exc
-    if respuesta.status_code >= 400:
-        raise ValueError(datos.get("msg") or datos.get("error_description") or "No se pudo registrar la cuenta")
-    return datos
+    return _leer_respuesta_correo_auth(respuesta)
+
+
+def auth_reenviar_confirmacion(email: str, redirect_to: str) -> dict:
+    respuesta = requests.post(
+        _auth_url("/resend"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
+        json={"type": "signup", "email": email}, timeout=AUTH_TIMEOUT,
+    )
+    return _leer_respuesta_correo_auth(respuesta)
 
 
 def auth_iniciar_sesion(email: str, password: str) -> dict:
@@ -1038,10 +1070,12 @@ def api_auth_registro():
         return jsonify({"ok": False, "error": "Supabase no está configurado en el servidor"}), 503
 
     body = request.get_json(silent=True) or {}
-    email = (body.get("email") or "").strip().lower()
-    password = body.get("password") or ""
+    if not isinstance(body, dict) or not isinstance(body.get("email"), str) or not isinstance(body.get("password"), str):
+        return jsonify({"ok": False, "error": "Ingresa un correo y una contraseña válidos"}), 400
+    email = body["email"].strip().lower()
+    password = body["password"]
 
-    if not email or "@" not in email:
+    if not validar_email(email)[0]:
         return jsonify({"ok": False, "error": "Ingresa un correo válido"}), 400
     if _acceso_bloqueado({"email": email}):
         return _respuesta_acceso_bloqueado()
@@ -1050,10 +1084,9 @@ def api_auth_registro():
         return jsonify({"ok": False, "error": mensaje_contrasena}), 400
 
     try:
-        # Devolver al mismo FarmaPulse donde se inició el registro. En desarrollo
-        # usa el host local actual; en producción APP_BASE_URL fija el dominio.
-        base_url = os.getenv("APP_BASE_URL", "").strip().rstrip("/") or request.host_url.rstrip("/")
-        datos = auth_registrar(email, password, f"{base_url}/comparador")
+        datos = auth_registrar(email, password, _url_confirmacion_correo())
+    except AuthEmailError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), exc.status
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except requests.RequestException:
@@ -1067,6 +1100,29 @@ def api_auth_registro():
         "access_token": datos.get("access_token"),
         "refresh_token": datos.get("refresh_token"),
     })
+
+
+@app.route("/api/auth/reenviar-confirmacion", methods=["POST"])
+@csrf.exempt
+@limiter.limit("1 per minute")
+@limiter.limit("3 per hour")
+def api_auth_reenviar_confirmacion():
+    if not _supabase_configurado():
+        return jsonify({"ok": False, "error": "El servicio de autenticación no está disponible"}), 503
+    body = request.get_json(silent=True)
+    email = body.get("email") if isinstance(body, dict) else None
+    if not isinstance(email, str) or not validar_email(email)[0]:
+        return jsonify({"ok": False, "error": "Ingresa un correo válido"}), 400
+    email = email.strip().lower()
+    if _acceso_bloqueado({"email": email}):
+        return _respuesta_acceso_bloqueado()
+    try:
+        auth_reenviar_confirmacion(email, _url_confirmacion_correo())
+    except AuthEmailError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), exc.status
+    except requests.RequestException:
+        return jsonify({"ok": False, "error": "No se pudo contactar el servicio de autenticación"}), 502
+    return jsonify({"ok": True, "mensaje": "Si el correo tiene una cuenta pendiente de confirmación, recibirás un nuevo enlace. Si ya la confirmaste, inicia sesión."})
 
 
 @app.route("/api/auth/login", methods=["POST"])

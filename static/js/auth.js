@@ -177,6 +177,32 @@
   btnAbrirLogin?.addEventListener("click", () => abrirModal(modalLogin));
   btnAbrirRegistro?.addEventListener("click", () => abrirModal(modalRegistro));
 
+  document.querySelectorAll("[data-reenviar-confirmacion]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const form = button.closest("form");
+      const input = form.querySelector('[name="email"]');
+      if (!input.reportValidity()) return;
+      limpiarErrorFormulario(form);
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = "Solicitando confirmación…";
+      try {
+        const response = await fetch("/api/auth/reenviar-confirmacion", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: input.value.trim() }),
+        });
+        const data = await leerRespuestaJson(response);
+        if (!response.ok || !data.ok) throw new Error(data.error || "No se pudo solicitar la confirmación");
+        mostrarErrorFormulario(form, data.mensaje, true);
+      } catch (error) {
+        mostrarErrorFormulario(form, error.message, false);
+      } finally {
+        button.textContent = "Espera un minuto para reenviar";
+        window.setTimeout(() => { button.disabled = false; button.textContent = original; }, 60000);
+      }
+    });
+  });
+
   document.querySelectorAll("[data-cerrar-modal]").forEach((el) =>
     el.addEventListener("click", () => {
       cerrarModal(modalLogin);
@@ -257,7 +283,7 @@
       if (!data.ok) throw new Error(data.error || "No se pudo crear la cuenta");
 
       if (data.requiere_confirmacion) {
-        mostrarErrorFormulario(formRegistro, "¡Cuenta creada! Revisa tu correo para confirmarla antes de iniciar sesión.", true);
+        mostrarErrorFormulario(formRegistro, "Revisa tu correo para confirmar la cuenta. Si ya la confirmaste anteriormente, inicia sesión.", true);
       } else {
         guardarSesion({ access_token: data.access_token, refresh_token: data.refresh_token, usuario: data.usuario });
         actualizarNavbar();
