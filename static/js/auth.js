@@ -114,7 +114,7 @@
     const btn = formRegistro.querySelector('button[type="submit"]');
 
     const requisitosPassword = [
-      [password.length >= 8 && password.length <= 12, "Debe tener entre 8 y 12 caracteres."],
+      [password.length >= 12 && password.length <= 128, "Debe tener entre 12 y 128 caracteres."],
       [/[A-Z]/.test(password), "Debe incluir al menos una mayúscula."],
       [/[a-z]/.test(password), "Debe incluir al menos una minúscula."],
       [/\d/.test(password), "Debe incluir al menos un número."],

@@ -12,8 +12,8 @@ from typing import Tuple
 
 
 # Configuración de política de contraseñas
-PASSWORD_MIN_LENGTH = 8
-PASSWORD_MAX_LENGTH = 12
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_LENGTH = 128
 PASSWORD_REQUIRE_UPPERCASE = True
 PASSWORD_REQUIRE_LOWERCASE = True
 PASSWORD_REQUIRE_NUMBERS = True
@@ -28,7 +28,7 @@ def validar_contrasena(password: str) -> Tuple[bool, str]:
     Valida una contraseña según la política de seguridad de FarmaPulse.
     
     Requisitos:
-    - Entre 8 y 12 caracteres
+    - Mínimo 12 caracteres y máximo 128
     - Al menos una mayúscula
     - Al menos una minúscula
     - Al menos un número
@@ -42,7 +42,7 @@ def validar_contrasena(password: str) -> Tuple[bool, str]:
         
     Ejemplos:
         >>> validar_contrasena("abc123")
-        (False, "La contraseña debe tener al menos 8 caracteres")
+        (False, "La contraseña debe tener al menos 12 caracteres")
         
         >>> validar_contrasena("Abc123!@#def")
         (True, "OK")
@@ -246,7 +246,7 @@ if __name__ == "__main__":
     test_passwords = [
         ("abc123", "Muy corta y sin caracteres especiales"),
         ("Abc123!@#", "Menos de 12 caracteres"),
-        ("Abc123!x", "✓ Válida"),
+        ("Abc123!@#def", "✓ Válida"),
         ("abc123!@#def", "Sin mayúscula"),
         ("ABC123!@#DEF", "Sin minúscula"),
         ("Abcdefg!@#def", "Sin número"),
