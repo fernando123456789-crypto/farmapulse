@@ -9,7 +9,7 @@ Este servidor expone:
     scrapers/registry.py (Inkafarma, Mifarma, ...). Agregar una farmacia
     nueva no requiere tocar este archivo — ver scrapers/base.py.
   - Autenticación con Supabase Auth (correo + contraseña).
-  - Botón de WhatsApp configurable.
+  - Checkout de pagos con Culqi y comprobantes por correo.
   - Algoritmo de ordenamiento/ahorro por precio unitario.
   - Integración con Supabase para guardar/consultar "listas de receta".
 
@@ -22,8 +22,13 @@ Luego abrir http://127.0.0.1:5000
 
 import os
 import random
+import re
+import smtplib
+import time
 import uuid
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from functools import wraps
 
 import requests
@@ -32,6 +37,7 @@ from flask import Flask, g, jsonify, render_template, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_talisman import Talisman
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 from flask_wtf.csrf import CSRFProtect
@@ -73,7 +79,9 @@ Talisman(
     strict_transport_security_max_age=31536000,
     content_security_policy={
         "default-src": "'self'",
-        "script-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "kit.fontawesome.com"],
+        "script-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "kit.fontawesome.com", "js.culqi.com"],
+        "connect-src": ["'self'", "https://api.culqi.com"],
+        "frame-src": ["'self'", "https://checkout.culqi.com"],
         "style-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
         "img-src": ["'self'", "data:", "https:"],
         "font-src": ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
@@ -83,7 +91,14 @@ Talisman(
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-WHATSAPP_NUMERO = os.getenv("WHATSAPP_NUMERO", "51963119803")
+CULQI_PUBLIC_KEY = os.getenv("CULQI_PUBLIC_KEY", "")
+CULQI_SECRET_KEY = os.getenv("CULQI_SECRET_KEY", "")
+MAIL_HOST = os.getenv("MAIL_HOST", "")
+MAIL_PORT = int(os.getenv("MAIL_PORT", "587"))
+MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
+MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
+MAIL_FROM = os.getenv("MAIL_FROM", MAIL_USERNAME)
+_COTIZACIONES = URLSafeTimedSerializer(os.getenv("SECRET_KEY", ""), salt="farmapulse-cotizaciones")
 
 # ---------------------------------------------------------------------------
 # Cliente Supabase (con manejo de errores si las credenciales no son válidas
@@ -380,16 +395,204 @@ def api_ubicaciones():
 
 @app.route("/api/config", methods=["GET"])
 def api_config():
-    """Config pública para el frontend (número de WhatsApp, mensaje base,
+    """Config pública para el frontend (pasarela de pago,
     y datos del servicio de delivery mostrados en el checkout)."""
     return jsonify({
         "ok": True,
-        "whatsapp_numero": WHATSAPP_NUMERO,
-        "whatsapp_mensaje": "Hola FarmaPulse, quisiera coordinar un pedido/consulta de medicamentos 🙂",
+        "culqi_public_key": CULQI_PUBLIC_KEY,
+        "pasarela_configurada": bool(CULQI_PUBLIC_KEY and CULQI_SECRET_KEY and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM),
         "zona_delivery": ZONA_DELIVERY,
         "tiempo_delivery_minutos": TIEMPO_DELIVERY_MINUTOS,
         "costo_delivery": COSTO_DELIVERY,
     })
+
+
+# ---------------------------------------------------------------------------
+# Pagos con Culqi y comprobantes por correo
+# ---------------------------------------------------------------------------
+def _enviar_comprobante(email: str, nombre: str, dni: str, cliente: dict, productos: list, subtotal: Decimal, delivery: Decimal, total: Decimal, cargo_id: str) -> None:
+    mensaje = EmailMessage()
+    mensaje["Subject"] = f"Comprobante de compra FarmaPulse - {cargo_id}"
+    mensaje["From"] = MAIL_FROM
+    mensaje["To"] = email
+    lineas = [f"Hola {nombre}, tu compra fue realizada con éxito.", "", f"Comprobante de pago: {cargo_id}", f"Nombre: {nombre}", f"DNI: {dni}", f"Correo: {email}", "", "Productos:"]
+    lineas.extend(f"- {p['medicamento']} ({p['presentacion']}) en {p['farmacia']}: S/ {p['precio']}" for p in productos)
+    lineas.extend(["", f"Dirección de entrega: {cliente['direccion']}, {cliente['distrito']}",
+                   f"Subtotal: S/ {subtotal:.2f}", f"Delivery: S/ {delivery:.2f}",
+                   f"Total pagado: S/ {total:.2f}", "", "Este correo confirma el pago procesado por Culqi."])
+    mensaje.set_content("\n".join(lineas))
+    with smtplib.SMTP(MAIL_HOST, MAIL_PORT, timeout=15) as servidor:
+        servidor.starttls()
+        servidor.login(MAIL_USERNAME, MAIL_PASSWORD)
+        servidor.send_message(mensaje)
+
+
+def _datos_checkout(items: list):
+    if not isinstance(items, list) or not items or len(items) > 20:
+        raise ValueError("El carrito no es válido")
+    productos = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("El carrito no es válido")
+        cotizacion = _COTIZACIONES.loads(item.get("cotizacion", ""), max_age=1800)
+        precio = Decimal(cotizacion["precio"])
+        if not precio.is_finite() or precio <= 0:
+            raise ValueError("El precio del carrito no es válido")
+        productos.append(cotizacion)
+    subtotal = sum((Decimal(p["precio"]) for p in productos), Decimal("0.00"))
+    delivery = Decimal(str(COSTO_DELIVERY)).quantize(Decimal("0.01"))
+    return productos, subtotal, delivery, subtotal + delivery
+
+
+def _datos_cliente_checkout(body: dict) -> dict:
+    nombre = body.get("nombre")
+    dni = body.get("dni")
+    telefono = body.get("telefono")
+    distrito = body.get("distrito")
+    direccion = body.get("direccion")
+    if (not isinstance(nombre, str) or not 2 <= len(nombre.strip()) <= 120
+            or not isinstance(dni, str) or not re.fullmatch(r"\d{8}", dni)
+            or not isinstance(telefono, str) or not re.fullmatch(r"9\d{8}", telefono)
+            or distrito not in ZONA_DELIVERY
+            or not isinstance(direccion, str) or not 5 <= len(direccion.strip()) <= 250):
+        raise ValueError("Completa los datos de entrega, nombre y DNI para continuar")
+    return {
+        "nombre": nombre.strip(), "dni": dni, "telefono": telefono,
+        "distrito": distrito, "direccion": direccion.strip(),
+    }
+
+
+@app.route("/api/checkout/orden", methods=["POST"])
+@csrf.exempt
+@limiter.limit("5 per minute")
+@sesion_requerida
+def api_checkout_orden():
+    if not (CULQI_PUBLIC_KEY and CULQI_SECRET_KEY and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM):
+        return jsonify({"ok": False, "error": "La pasarela o el correo no están configurados"}), 503
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "La solicitud no es válida"}), 400
+    try:
+        cliente = _datos_cliente_checkout(body)
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    nombre, dni = cliente["nombre"], cliente["dni"]
+    email = (g.usuario.get("email") or "").strip().lower()
+    if len(nombre) < 2 or len(nombre) > 120 or not dni.isdigit() or len(dni) != 8 or not email:
+        return jsonify({"ok": False, "error": "Ingresa tu nombre y un DNI válido de 8 dígitos"}), 400
+    try:
+        _, _, _, total = _datos_checkout(body.get("productos") or [])
+    except (BadSignature, SignatureExpired, KeyError, InvalidOperation, TypeError, ValueError):
+        return jsonify({"ok": False, "error": "El carrito cambió o la cotización venció. Actualiza e intenta de nuevo"}), 400
+
+    centimos = int(total * 100)
+    if centimos < 600 or centimos > 700000:
+        return jsonify({"ok": False, "error": "El total está fuera del rango permitido por Culqi"}), 400
+    nombres = nombre.split(maxsplit=1)
+    try:
+        respuesta = requests.post("https://api.culqi.com/v2/orders",
+            headers={"Authorization": f"Bearer {CULQI_SECRET_KEY}", "Content-Type": "application/json"},
+            json={"amount": centimos, "currency_code": "PEN", "description": "Compra FarmaPulse",
+                  "order_number": f"fp-{uuid.uuid4().hex}", "expiration_date": str(int(time.time()) + 1800),
+                  "client_details": {"first_name": nombres[0], "last_name": nombres[-1], "email": email,
+                                     "phone_number": f"+51{cliente['telefono']}"},
+                  "metadata": {"dni": dni, "distrito": cliente["distrito"], "direccion": cliente["direccion"]}}, timeout=20)
+        datos = respuesta.json()
+    except (requests.RequestException, ValueError):
+        return jsonify({"ok": False, "error": "No se pudo preparar el pago con Culqi"}), 502
+    if respuesta.status_code >= 400 or not isinstance(datos, dict) or not datos.get("id", "").startswith(("ord_test_", "ord_live_")):
+        mensaje = (datos.get("user_message") or datos.get("merchant_message")) if isinstance(datos, dict) else None
+        return jsonify({"ok": False, "error": mensaje or "Culqi no pudo preparar el pago"}), 502
+    firma = _COTIZACIONES.dumps({**cliente, "id": datos["id"], "amount": centimos, "email": email})
+    return jsonify({"ok": True, "orden_id": datos["id"], "orden_firma": firma, "amount": centimos})
+
+
+@app.route("/api/checkout/pagar", methods=["POST"])
+@csrf.exempt
+@limiter.limit("5 per minute")
+@sesion_requerida
+def api_checkout_pagar():
+    if not (CULQI_PUBLIC_KEY and CULQI_SECRET_KEY and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM):
+        return jsonify({"ok": False, "error": "La pasarela o el correo no están configurados"}), 503
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "La solicitud no es válida"}), 400
+    try:
+        cliente = _datos_cliente_checkout(body)
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    nombre, dni = cliente["nombre"], cliente["dni"]
+    token, items = (body.get("token") or "").strip(), body.get("productos") or []
+    orden_firma = (body.get("orden_firma") or "").strip()
+    email = (g.usuario.get("email") or "").strip().lower()
+    if len(nombre) < 2 or len(nombre) > 120 or not dni.isdigit() or len(dni) != 8:
+        return jsonify({"ok": False, "error": "Ingresa tu nombre y un DNI válido de 8 dígitos"}), 400
+    if (not email or not token.startswith(("tkn_test_", "tkn_live_", "ype_test_", "ype_live_"))
+            or not orden_firma):
+        return jsonify({"ok": False, "error": "La sesión o el carrito no son válidos"}), 400
+
+    try:
+        productos, subtotal, delivery, total = _datos_checkout(items)
+        orden = _COTIZACIONES.loads(orden_firma, max_age=1800)
+        if (orden.get("email") != email or orden.get("amount") != int(total * 100)
+                or any(orden.get(campo) != valor for campo, valor in cliente.items())
+                or not orden.get("id", "").startswith(("ord_test_", "ord_live_"))):
+            raise ValueError("La orden no corresponde a esta compra")
+    except (BadSignature, SignatureExpired, KeyError, InvalidOperation, TypeError, ValueError):
+        return jsonify({"ok": False, "error": "El carrito cambió o la cotización venció. Actualiza e intenta de nuevo"}), 400
+
+    if token.startswith(("ype_test_", "ype_live_")) and int(total * 100) > 200000:
+        return jsonify({"ok": False, "error": "Yape permite pagos de hasta S/ 2,000"}), 400
+
+    cuotas = body.get("installments")
+    if cuotas not in (None, "") and not token.startswith(("tkn_test_", "tkn_live_")):
+        return jsonify({"ok": False, "error": "Las cuotas solo están disponibles para pagos con tarjeta"}), 400
+    cargo = {"amount": int(total * 100), "currency_code": "PEN", "email": email, "source_id": token,
+             "capture": True, "description": "Compra FarmaPulse",
+             "metadata": {"dni": dni, "nombre": nombre, "order_id": orden["id"], "distrito": cliente["distrito"]}}
+    if cuotas not in (None, ""):
+        try:
+            cuotas = int(cuotas)
+            if cuotas < 2 or cuotas > 48:
+                raise ValueError
+            token_response = requests.get(f"https://api.culqi.com/v2/tokens/{token}",
+                headers={"Authorization": f"Bearer {CULQI_SECRET_KEY}"}, timeout=10)
+            token_data = token_response.json()
+            permitidas = token_data.get("iin", {}).get("installments_allowed", [])
+            if token_response.status_code >= 400 or cuotas not in permitidas:
+                return jsonify({"ok": False, "error": "Las cuotas seleccionadas no están disponibles para esta tarjeta"}), 400
+            cargo["installments"] = str(cuotas)
+        except (TypeError, ValueError, requests.RequestException):
+            return jsonify({"ok": False, "error": "No se pudieron validar las cuotas de la tarjeta"}), 400
+
+    nombres = nombre.split(maxsplit=1)
+    cargo["antifraud_details"] = {
+        "first_name": nombres[0], "last_name": nombres[-1],
+        "address": cliente["direccion"], "address_city": "Lima",
+        "country_code": "PE", "phone_number": int(cliente["telefono"]), "email": email,
+    }
+    try:
+        respuesta = requests.post("https://api.culqi.com/v2/charges",
+            headers={"Authorization": f"Bearer {CULQI_SECRET_KEY}", "Content-Type": "application/json"},
+            json=cargo, timeout=20)
+        datos = respuesta.json()
+    except (requests.RequestException, ValueError):
+        return jsonify({"ok": False, "error": "No se pudo confirmar el pago con Culqi. Revisa tu estado de cuenta antes de reintentar"}), 502
+    if (respuesta.status_code >= 400 or not isinstance(datos, dict)
+            or datos.get("state", "").lower() not in {"exitosa", "captured", "paid"}
+            or datos.get("currency") != "PEN"
+            or datos.get("amount") != int(total * 100)):
+        mensaje = (datos.get("user_message") or datos.get("merchant_message")) if isinstance(datos, dict) else None
+        return jsonify({"ok": False, "error": mensaje or "Culqi no pudo procesar el pago"}), 402
+
+    cargo_id = datos.get("id", "")
+    try:
+        _enviar_comprobante(email, nombre, dni, cliente, productos, subtotal, delivery, total, cargo_id)
+    except (smtplib.SMTPException, OSError):
+        app.logger.exception("El pago %s fue exitoso, pero falló el envío del comprobante", cargo_id)
+        return jsonify({"ok": True, "pago_confirmado": True, "comprobante_enviado": False,
+                        "mensaje": "Pago aprobado; no se pudo enviar el comprobante por correo. Contacta a soporte.", "cargo_id": cargo_id})
+    return jsonify({"ok": True, "pago_confirmado": True, "comprobante_enviado": True, "cargo_id": cargo_id})
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +715,16 @@ def api_buscar():
         )
 
     resultados_ordenados, ahorro_maximo = _calcular_ahorro_y_ordenar(resultados)
+    for producto in resultados_ordenados:
+        if fuente != "farmacias":
+            continue
+        cotizacion = {
+            "medicamento": producto["medicamento"],
+            "farmacia": producto["farmacia"],
+            "presentacion": producto.get("presentacion") or "presentación única",
+            "precio": str(Decimal(str(producto.get("precio_empaque") or producto["precio_unitario"])).quantize(Decimal("0.01"))),
+        }
+        producto["cotizacion"] = _COTIZACIONES.dumps(cotizacion)
 
     return jsonify({
         "ok": True,
