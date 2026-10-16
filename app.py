@@ -35,6 +35,7 @@ from flask_talisman import Talisman
 
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 from flask_wtf.csrf import CSRFProtect
+from security import validar_contrasena
 
 # ---------------------------------------------------------------------------
 # Configuración inicial
@@ -408,8 +409,9 @@ def api_auth_registro():
 
     if not email or "@" not in email:
         return jsonify({"ok": False, "error": "Ingresa un correo válido"}), 400
-    if len(password) < 6:
-        return jsonify({"ok": False, "error": "La contraseña debe tener al menos 6 caracteres"}), 400
+    password_valida, mensaje_password = validar_contrasena(password)
+    if not password_valida:
+        return jsonify({"ok": False, "error": mensaje_password}), 400
 
     try:
         datos = auth_registrar(email, password)

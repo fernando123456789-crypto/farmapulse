@@ -52,8 +52,9 @@
       </div>
       <div>
         <label class="block text-sm font-semibold text-slate-600 mb-1">Contraseña</label>
-        <input name="password" type="password" required minlength="6" placeholder="Mínimo 6 caracteres"
+        <input name="password" type="password" required minlength="8" maxlength="12" placeholder="8 a 12 caracteres"
                class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+        <p class="mt-1 text-xs text-slate-500">Usa mayúscula, minúscula, número y símbolo.</p>
       </div>
       <button type="submit" class="w-full bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">
         Crear cuenta
