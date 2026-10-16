@@ -28,8 +28,7 @@ def validar_contrasena(password: str) -> Tuple[bool, str]:
     Valida una contraseña según la política de seguridad de FarmaPulse.
     
     Requisitos:
-    - Mínimo 12 caracteres
-    - Máximo 128 caracteres
+    - Mínimo 12 caracteres y máximo 128
     - Al menos una mayúscula
     - Al menos una minúscula
     - Al menos un número

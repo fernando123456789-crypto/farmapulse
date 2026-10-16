@@ -113,6 +113,20 @@
     const password = formRegistro.querySelector('[name="password"]').value;
     const btn = formRegistro.querySelector('button[type="submit"]');
 
+    const requisitosPassword = [
+      [password.length >= 12 && password.length <= 128, "Debe tener entre 12 y 128 caracteres."],
+      [/[A-Z]/.test(password), "Debe incluir al menos una mayúscula."],
+      [/[a-z]/.test(password), "Debe incluir al menos una minúscula."],
+      [/\d/.test(password), "Debe incluir al menos un número."],
+      [/[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/.test(password), "Debe incluir al menos un símbolo permitido."],
+      [!/[\s]/.test(password), "No puede contener espacios."],
+    ];
+    const requisitoIncumplido = requisitosPassword.find(([cumplido]) => !cumplido);
+    if (requisitoIncumplido) {
+      mostrarErrorFormulario(formRegistro, requisitoIncumplido[1], false);
+      return;
+    }
+
     btn.disabled = true;
     const textoOriginal = btn.textContent;
     btn.textContent = "Creando cuenta...";
