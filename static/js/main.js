@@ -2,7 +2,7 @@
    FarmaPulse - main.js
    Lógica de filtros en cascada, consumo de /api/buscar,
    renderizado dinámico de la tabla comparativa y manejo
-   del carrito de compra + checkout con Culqi.
+   del carrito de compra + checkout con Mercado Pago.
    ========================================================= */
 
 (function () {
@@ -37,22 +37,39 @@
   const checkoutSubtotal = document.getElementById("checkoutSubtotal");
   const checkoutDelivery = document.getElementById("checkoutDelivery");
   const checkoutTotal = document.getElementById("checkoutTotal");
-  const checkoutNombre = document.getElementById("checkoutNombre");
+  const checkoutApellidos = document.getElementById("checkoutApellidos");
+  const checkoutNombres = document.getElementById("checkoutNombres");
   const checkoutDni = document.getElementById("checkoutDni");
   const checkoutTelefono = document.getElementById("checkoutTelefono");
   const checkoutDistrito = document.getElementById("checkoutDistrito");
   const checkoutDireccion = document.getElementById("checkoutDireccion");
+  const checkoutPlaceId = document.getElementById("checkoutPlaceId");
+  const checkoutDireccionValidacion = document.getElementById("checkoutDireccionValidacion");
+  const checkoutDireccionEstado = document.getElementById("checkoutDireccionEstado");
+  const checkoutDireccionSugerencias = document.getElementById("checkoutDireccionSugerencias");
   const checkoutEmail = document.getElementById("checkoutEmail");
   const checkoutError = document.getElementById("checkoutError");
-  const btnPagarCulqi = document.getElementById("btnPagarCulqi");
+  const btnPagarMercadoPago = document.getElementById("btnPagarMercadoPago");
 
   const CLAVE_CARRITO = "farmapulse_carrito";
+  let temporizadorDireccion = null;
+  let cobroEnCurso = false;
+  let pagoSinConfirmar = false;
+  let versionCheckout = 0;
+  let checkoutMercadoPago = null;
+  let temporizadorEstadoPago = null;
+  let ordenPendiente = null;
+  let pagoPendiente = null;
+  const tarjetaMercadoPago = document.getElementById("mercadoPagoTarjeta");
+  const estadoMercadoPago = document.getElementById("mercadoPagoEstado");
+  let versionDireccion = 0;
 
   // Configuración del servicio y pasarela.
   // Se pide una sola vez a /api/config para no hardcodear nada en el JS.
   let configServicio = {
-    culqi_public_key: "",
+    mercado_pago_public_key: "",
     pasarela_configurada: false,
+    geocodificador_configurado: true,
     zona_delivery: ["San Borja", "San Luis", "La Victoria"],
     tiempo_delivery_minutos: 35,
     costo_delivery: 5,
@@ -258,6 +275,219 @@
     div.textContent = texto == null ? "" : String(texto);
     return div.innerHTML;
   }
+
+  checkoutDni.addEventListener("input", () => {
+    checkoutDni.value = checkoutDni.value.replace(/\D/g, "").slice(0, 8);
+  });
+
+  function estadoDireccion(mensaje, error = false, exito = false) {
+    checkoutDireccionEstado.textContent = mensaje;
+    checkoutDireccionEstado.classList.remove("text-slate-500", "text-red-600", "text-fpGreenDark");
+    checkoutDireccionEstado.classList.add(error ? "text-red-600" : exito ? "text-fpGreenDark" : "text-slate-500");
+  }
+
+  function invalidarDireccionSeleccionada() {
+    invalidarFormularioPago();
+    checkoutPlaceId.value = "";
+    checkoutDireccionValidacion.value = "";
+    delete checkoutDireccionValidacion.dataset.distrito;
+  }
+
+  let mapaEntrega = null;
+  let areasReparto = null;
+  let marcadorEntrega = null;
+  let temporizadorPunto = null;
+  const centrosDistritos = {
+    "San Borja": [-12.107, -76.999], "San Luis": [-12.074, -76.999],
+    "La Victoria": [-12.073, -77.019],
+  };
+
+  function prepararMapaEntrega() {
+    if (!window.L) {
+      estadoDireccion("No se pudo cargar el mapa. Recarga la página para continuar.", true);
+      return;
+    }
+    if (!mapaEntrega) {
+      mapaEntrega = window.L.map("checkoutMapa", { scrollWheelZoom: false, maxBoundsViscosity: 1 })
+        .setView(centrosDistritos[checkoutDistrito.value] || [-12.085, -77.01], 14);
+      mapaEntrega.attributionControl.setPrefix(false);
+      window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(mapaEntrega);
+      mapaEntrega.on("click", (evento) => elegirPuntoEntrega(evento.latlng));
+      fetch("/static/data/area_reparto.geojson")
+        .then((respuesta) => { if (!respuesta.ok) throw new Error(); return respuesta.json(); })
+        .then((areas) => {
+          areasReparto = areas;
+          const cobertura = window.L.geoJSON(areas, {
+            interactive: false, style: { color: "#0f766e", weight: 2, fillOpacity: 0.1 },
+          }).addTo(mapaEntrega);
+          const limites = cobertura.getBounds().pad(0.05);
+          mapaEntrega.setMaxBounds(limites);
+          mapaEntrega.setMinZoom(mapaEntrega.getBoundsZoom(limites));
+          mapaEntrega.fitBounds(limites);
+          const exteriores = areas.features.flatMap((feature) => {
+            const geometry = feature.geometry;
+            const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+            return polygons.map((rings) => rings[0].map(([lon, lat]) => [lat, lon]));
+          });
+          window.L.polygon([
+            [[-85, -180], [-85, 180], [85, 180], [85, -180]], ...exteriores,
+          ], { interactive: false, stroke: false, fillColor: "#f8fafc", fillOpacity: 0.85, fillRule: "evenodd" })
+            .addTo(mapaEntrega);
+        })
+        .catch(() => estadoDireccion("No se pudo cargar la cobertura. Recarga la página antes de elegir una ubicación.", true));
+    }
+    mapaEntrega.invalidateSize();
+  }
+
+  function colocarMarcador(punto) {
+    if (!marcadorEntrega) {
+      marcadorEntrega = window.L.marker(punto, {
+        draggable: true, title: "Punto de entrega: arrastra hasta tu puerta",
+        icon: window.L.divIcon({ className: "checkout-pin", html: "•", iconSize: [30, 30], iconAnchor: [15, 15] }),
+      }).addTo(mapaEntrega);
+      marcadorEntrega.on("dragstart", () => {
+        ++versionDireccion;
+        clearTimeout(temporizadorPunto);
+        invalidarDireccionSeleccionada();
+      });
+      marcadorEntrega.on("dragend", () => elegirPuntoEntrega(marcadorEntrega.getLatLng()));
+    } else {
+      marcadorEntrega.setLatLng(punto);
+    }
+  }
+
+  function elegirPuntoEntrega(punto) {
+    clearTimeout(temporizadorDireccion);
+    clearTimeout(temporizadorPunto);
+    const version = ++versionDireccion;
+    invalidarDireccionSeleccionada();
+    checkoutDireccionSugerencias.classList.add("hidden");
+    if (!areasReparto || !window.FarmaPulseDeliveryArea) {
+      estadoDireccion("Espera a que se cargue la cobertura del mapa.", true);
+      return;
+    }
+    if (!window.FarmaPulseDeliveryArea.districtForPoint(areasReparto, punto.lat, punto.lng)) {
+      if (marcadorEntrega) {
+        marcadorEntrega.remove();
+        marcadorEntrega = null;
+      }
+      estadoDireccion("Solo entregamos en San Borja, San Luis y La Victoria. Elige un punto dentro del área resaltada.", true);
+      return;
+    }
+    colocarMarcador(punto);
+    if (checkoutDireccion.value.trim().length < 5) {
+      estadoDireccion("Escribe la calle, número o referencia y vuelve a marcar el punto de entrega.");
+      return;
+    }
+    estadoDireccion("Comprobando cobertura del punto de entrega...");
+    temporizadorPunto = window.setTimeout(() => confirmarPuntoEntrega(punto, version), 350);
+  }
+
+  async function confirmarPuntoEntrega(punto, version) {
+    try {
+      const respuesta = await fetch("/api/direcciones/validar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
+        body: JSON.stringify({ latitud: punto.lat, longitud: punto.lng, direccion: checkoutDireccion.value.trim() }),
+      });
+      const datos = await respuesta.json();
+      if (version !== versionDireccion) return;
+      if (!respuesta.ok || !datos.ok) throw new Error(datos.error || "No se pudo comprobar la cobertura");
+      checkoutDistrito.value = datos.distrito;
+      checkoutPlaceId.value = datos.place_id;
+      checkoutDireccionValidacion.value = datos.validacion;
+      checkoutDireccionValidacion.dataset.distrito = datos.distrito;
+      estadoDireccion(`Punto de entrega seleccionado en ${datos.distrito}.`, false, true);
+    } catch (error) {
+      if (version !== versionDireccion) return;
+      invalidarDireccionSeleccionada();
+      estadoDireccion(error.message, true);
+    }
+  }
+
+  async function cargarSugerenciasDireccion(texto, version) {
+    try {
+      const respuesta = await fetch("/api/direcciones/sugerencias", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
+        body: JSON.stringify({ texto, distrito: checkoutDistrito.value }),
+      });
+      const datos = await respuesta.json();
+      if (version !== versionDireccion || checkoutDireccion.value.trim() !== texto) return;
+      if (!respuesta.ok || !datos.ok) throw new Error(datos.error || "No se pudieron buscar direcciones");
+      checkoutDireccionSugerencias.replaceChildren();
+      for (const sugerencia of datos.sugerencias || []) {
+        const opcion = document.createElement("button");
+        opcion.type = "button";
+        opcion.setAttribute("role", "option");
+        opcion.className = "block w-full border-b border-slate-100 px-4 py-3 text-left text-sm text-slate-700 hover:bg-fpMint last:border-b-0";
+        opcion.textContent = sugerencia.descripcion;
+        opcion.addEventListener("click", () => {
+          if (version !== versionDireccion) return;
+          prepararMapaEntrega();
+          if (!mapaEntrega) return;
+          const punto = window.L.latLng(sugerencia.latitud, sugerencia.longitud);
+          mapaEntrega.setView(punto, 18);
+          colocarMarcador(punto);
+          checkoutDireccionSugerencias.classList.add("hidden");
+          if (sugerencia.direccion_precisa) {
+            elegirPuntoEntrega(punto);
+          } else {
+            ++versionDireccion;
+            estadoDireccion("Calle encontrada. Mueve el marcador hasta el punto exacto de entrega.");
+          }
+        });
+        checkoutDireccionSugerencias.appendChild(opcion);
+      }
+      checkoutDireccionSugerencias.classList.toggle("hidden", checkoutDireccionSugerencias.childElementCount === 0);
+      estadoDireccion(checkoutDireccionSugerencias.childElementCount
+        ? "Elige tu calle y revisa el punto de entrega en el mapa."
+        : "Tu dirección no aparece. Puedes marcarla directamente en el mapa.");
+    } catch (error) {
+      if (version !== versionDireccion) return;
+      checkoutDireccionSugerencias.classList.add("hidden");
+      estadoDireccion("La búsqueda no está disponible. Puedes marcar tu dirección directamente en el mapa.");
+    }
+  }
+
+  checkoutDireccion.addEventListener("input", () => {
+    const texto = checkoutDireccion.value.trim();
+    const version = ++versionDireccion;
+    clearTimeout(temporizadorDireccion);
+    clearTimeout(temporizadorPunto);
+    invalidarDireccionSeleccionada();
+    checkoutDireccionSugerencias.classList.add("hidden");
+    if (texto.length < 3) {
+      estadoDireccion("Escribe tu dirección y marca el punto de entrega en el mapa.");
+      return;
+    }
+    estadoDireccion("Buscando tu calle...");
+    temporizadorDireccion = window.setTimeout(() => cargarSugerenciasDireccion(texto, version), 650);
+  });
+
+  checkoutDistrito.addEventListener("change", () => {
+    ++versionDireccion;
+    clearTimeout(temporizadorDireccion);
+    clearTimeout(temporizadorPunto);
+    invalidarDireccionSeleccionada();
+    checkoutDireccionSugerencias.classList.add("hidden");
+    if (mapaEntrega && centrosDistritos[checkoutDistrito.value]) {
+      mapaEntrega.setView(centrosDistritos[checkoutDistrito.value], 15);
+    }
+    estadoDireccion("Marca el punto exacto de entrega en el mapa.");
+  });
+  document.getElementById("checkoutUsarCentro").addEventListener("click", () => {
+    if (mapaEntrega) elegirPuntoEntrega(mapaEntrega.getCenter());
+  });
+
+  document.addEventListener("click", (evento) => {
+    if (!checkoutDireccionSugerencias.contains(evento.target) && evento.target !== checkoutDireccion) {
+      checkoutDireccionSugerencias.classList.add("hidden");
+    }
+  });
 
   // -------------------------------------------------------
   // Renderizado de la tabla comparativa
@@ -520,6 +750,9 @@
     }
     checkoutError.classList.add("hidden");
     checkoutEmail.textContent = `Comprobante para: ${window.FarmaPulseAuth.obtenerCorreoActivo() || "tu correo de cuenta"}`;
+    btnPagarMercadoPago.disabled = pagoSinConfirmar;
+    if (!pagoSinConfirmar) btnPagarMercadoPago.innerHTML = '<i class="fa-solid fa-lock"></i> Continuar con Mercado Pago';
+    if (ordenPendiente && pagoPendiente) iniciarSeguimientoPago(ordenPendiente, pagoPendiente);
 
     checkoutLista.innerHTML = carrito
       .map((item) => {
@@ -541,10 +774,90 @@
     checkoutDelivery.textContent = formatearSoles(costoEnvio);
     checkoutTotal.textContent = formatearSoles(subtotal + costoEnvio);
     modalCheckout.classList.remove("hidden");
+    window.requestAnimationFrame(prepararMapaEntrega);
   }
 
-  function cerrarCheckout() {
+  async function cerrarCheckout() {
+    if (cobroEnCurso) return;
     modalCheckout.classList.add("hidden");
+    ++versionCheckout;
+    clearTimeout(temporizadorEstadoPago);
+    if (checkoutMercadoPago) await checkoutMercadoPago.unmount();
+    tarjetaMercadoPago.classList.add("hidden");
+    estadoMercadoPago.classList.add("hidden");
+  }
+
+  async function invalidarFormularioPago() {
+    if (cobroEnCurso || pagoSinConfirmar || !checkoutMercadoPago) return;
+    const version = ++versionCheckout;
+    try { await checkoutMercadoPago.unmount(); } catch (error) { /* La orden anterior sigue protegida por el servidor. */ }
+    if (version !== versionCheckout) return;
+    tarjetaMercadoPago.classList.add("hidden");
+    estadoMercadoPago.classList.add("hidden");
+    btnPagarMercadoPago.textContent = "Continuar con Mercado Pago";
+  }
+
+  [checkoutDni, checkoutApellidos, checkoutNombres, checkoutTelefono, checkoutDistrito, checkoutDireccion]
+    .forEach((campo) => campo.addEventListener("input", invalidarFormularioPago));
+
+  function mostrarResultadoPago(data) {
+    checkoutError.classList.remove("hidden");
+    if (data.ok && data.pago_confirmado && data.estado === "aprobado") {
+      pagoSinConfirmar = false;
+      ordenPendiente = pagoPendiente = null;
+      localStorage.removeItem(CLAVE_CARRITO);
+      carrito = [];
+      renderizarCarrito();
+      tarjetaMercadoPago.classList.add("hidden");
+      checkoutError.textContent = data.comprobante_enviado
+        ? `¡Compra realizada con éxito! Enviamos el comprobante a tu correo. Operación: ${data.pago_id}.`
+        : `${data.mensaje} Operación: ${data.pago_id}.`;
+      checkoutError.classList.remove("border-red-200", "bg-red-50", "text-red-700");
+      checkoutError.classList.add("border-green-200", "bg-green-50", "text-green-700");
+      btnPagarMercadoPago.disabled = true;
+      btnPagarMercadoPago.textContent = "Pago aprobado";
+      clearTimeout(temporizadorEstadoPago);
+      return true;
+    }
+    checkoutError.textContent = data.error || "No se pudo confirmar el pago";
+    pagoSinConfirmar = ["pendiente", "sin_confirmar", "procesando"].includes(data.estado);
+    btnPagarMercadoPago.disabled = pagoSinConfirmar;
+    btnPagarMercadoPago.textContent = pagoSinConfirmar ? "Pago pendiente de confirmación" : "Continuar con Mercado Pago";
+    return false;
+  }
+
+  async function iniciarSeguimientoPago(orden, pago) {
+    ordenPendiente = orden;
+    pagoPendiente = pago;
+    tarjetaMercadoPago.classList.add("hidden");
+    estadoMercadoPago.classList.remove("hidden");
+    if (checkoutMercadoPago) {
+      try {
+        await checkoutMercadoPago.showStatus(pago, () => {
+          checkoutError.textContent = "No se pudo mostrar la verificación bancaria. El pago sigue pendiente; no vuelvas a pagar.";
+        });
+      } catch (error) {
+        checkoutError.textContent = "El pago sigue pendiente de confirmación. No vuelvas a pagar.";
+      }
+    }
+    clearTimeout(temporizadorEstadoPago);
+    let consultas = 0;
+    async function consultar() {
+      if (modalCheckout.classList.contains("hidden") || ordenPendiente !== orden) return;
+      try {
+        const response = await fetch(`/api/checkout/estado/${encodeURIComponent(orden.orden_id)}`, {
+          headers: window.FarmaPulseAuth.headersAuth(),
+        });
+        const data = await response.json();
+        if (data.estado === "aprobado" || data.estado === "rechazado") {
+          mostrarResultadoPago(data);
+          ordenPendiente = pagoPendiente = null;
+          return;
+        }
+      } catch (error) { /* El webhook puede confirmar el pago aunque falle esta consulta. */ }
+      if (++consultas < 100) temporizadorEstadoPago = window.setTimeout(consultar, 4000);
+    }
+    temporizadorEstadoPago = window.setTimeout(consultar, 4000);
   }
 
   btnComprar.addEventListener("click", abrirCheckout);
@@ -552,13 +865,19 @@
     el.addEventListener("click", cerrarCheckout)
   );
 
-  btnPagarCulqi.addEventListener("click", async () => {
+  btnPagarMercadoPago.addEventListener("click", async () => {
+    if (cobroEnCurso || pagoSinConfirmar || carrito.length === 0) return;
     checkoutError.classList.add("hidden");
     checkoutError.classList.remove("border-green-200", "bg-green-50", "text-green-700");
     checkoutError.classList.add("border-red-200", "bg-red-50", "text-red-700");
-    if (![checkoutNombre, checkoutDni, checkoutTelefono, checkoutDistrito, checkoutDireccion].every((campo) => campo.reportValidity())) return;
-    if (!configServicio.pasarela_configurada || !configServicio.culqi_public_key) {
-      checkoutError.textContent = "La pasarela todavía no está configurada. Contacta a soporte.";
+    if (![checkoutDni, checkoutApellidos, checkoutNombres, checkoutTelefono, checkoutDistrito, checkoutDireccion].every((campo) => campo.reportValidity())) return;
+    if (!checkoutPlaceId.value || !checkoutDireccionValidacion.value) {
+      checkoutError.textContent = "Marca el punto exacto de entrega dentro de la zona de reparto.";
+      checkoutError.classList.remove("hidden");
+      return;
+    }
+    if (!configServicio.pasarela_configurada || !configServicio.mercado_pago_public_key) {
+      checkoutError.textContent = "Mercado Pago todavía no está configurado. Contacta a soporte.";
       checkoutError.classList.remove("hidden");
       return;
     }
@@ -567,84 +886,83 @@
       checkoutError.classList.remove("hidden");
       return;
     }
-    const correo = window.FarmaPulseAuth.obtenerCorreoActivo();
-    const importe = Math.round((totalCarrito() + Number(configServicio.costo_delivery || 0)) * 100);
-    if (!window.CulqiCheckout) {
-      checkoutError.textContent = "No se pudo cargar la pasarela de pago. Inténtalo nuevamente.";
+    if (!window.MercadoPago || !window.FarmaPulseMercadoPago) {
+      checkoutError.textContent = "No se pudo cargar Mercado Pago. Recarga la página.";
       checkoutError.classList.remove("hidden");
       return;
     }
-    btnPagarCulqi.disabled = true;
-    btnPagarCulqi.textContent = "Preparando pago...";
-    let orden;
-    try {
-      const respuestaOrden = await fetch("/api/checkout/orden", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
-        body: JSON.stringify({
-          nombre: checkoutNombre.value.trim(), dni: checkoutDni.value.trim(),
-          telefono: checkoutTelefono.value.trim(), distrito: checkoutDistrito.value,
-          direccion: checkoutDireccion.value.trim(), productos: carrito,
-        }),
+    cobroEnCurso = true;
+    const versionActual = ++versionCheckout;
+    btnPagarMercadoPago.disabled = true;
+    btnPagarMercadoPago.textContent = "Preparando pago...";
+    const datosCheckout = {
+      apellidos: checkoutApellidos.value.trim(), nombres: checkoutNombres.value.trim(),
+      dni: checkoutDni.value.trim(), telefono: checkoutTelefono.value.trim(), distrito: checkoutDistrito.value,
+      direccion: checkoutDireccion.value.trim(), place_id: checkoutPlaceId.value,
+      direccion_validacion: checkoutDireccionValidacion.value, productos: carrito.map((item) => ({ ...item })),
+    };
+    async function prepararOrden() {
+      const response = await fetch("/api/checkout/orden", {
+        method: "POST", headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
+        body: JSON.stringify(datosCheckout),
       });
-      orden = await respuestaOrden.json();
-      if (!orden.ok) throw new Error(orden.error || "No se pudo preparar el pago.");
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "No se pudo preparar el pago");
+      return data;
+    }
+    try {
+      let orden = await prepararOrden();
+      if (!checkoutMercadoPago) checkoutMercadoPago = new window.FarmaPulseMercadoPago(configServicio.mercado_pago_public_key);
+      tarjetaMercadoPago.classList.remove("hidden");
+      estadoMercadoPago.classList.add("hidden");
+      await checkoutMercadoPago.mount(orden.amount / 100, window.FarmaPulseAuth.obtenerCorreoActivo(), async (formData, additionalData) => {
+        if (cobroEnCurso || pagoSinConfirmar || versionActual !== versionCheckout || carrito.length === 0) return;
+        cobroEnCurso = true;
+        btnPagarMercadoPago.disabled = true;
+        try {
+          if (!orden) orden = await prepararOrden();
+          let response, data;
+          try {
+            response = await fetch("/api/checkout/pagar", {
+              method: "POST", headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
+              body: JSON.stringify({ ...datosCheckout, orden_firma: orden.orden_firma,
+                token: formData.token, payment_method_id: formData.payment_method_id,
+                payment_type_id: additionalData?.paymentTypeId,
+                issuer_id: formData.issuer_id, installments: formData.installments,
+              }),
+            });
+            data = await response.json();
+          } catch (error) {
+            mostrarResultadoPago({ estado: "sin_confirmar", error: `No se recibió la confirmación. No repitas el pago; contacta a soporte con la referencia ${orden.orden_id}.` });
+            return;
+          }
+          if (mostrarResultadoPago(data)) return;
+          if (data.estado === "pendiente" && data.pago_id) {
+            await iniciarSeguimientoPago(orden, data);
+          } else if (!pagoSinConfirmar) {
+            orden = null;
+          }
+        } catch (error) {
+          checkoutError.textContent = error.message;
+          checkoutError.classList.remove("hidden");
+        } finally {
+          cobroEnCurso = false;
+          btnPagarMercadoPago.disabled = pagoSinConfirmar || carrito.length === 0;
+        }
+      }, () => {
+        checkoutError.textContent = "Mercado Pago no pudo completar esta acción. Revisa los datos de la tarjeta e inténtalo nuevamente.";
+        checkoutError.classList.remove("hidden");
+      });
+      btnPagarMercadoPago.textContent = "Actualizar datos del pago";
     } catch (error) {
       checkoutError.textContent = error.message;
       checkoutError.classList.remove("hidden");
-      btnPagarCulqi.disabled = false;
-      btnPagarCulqi.innerHTML = '<i class="fa-solid fa-lock"></i> Pagar con tarjeta o Yape';
-      return;
+    } finally {
+      cobroEnCurso = false;
+      btnPagarMercadoPago.disabled = pagoSinConfirmar;
     }
-
-    const checkout = new window.CulqiCheckout(configServicio.culqi_public_key, {
-      settings: { title: "FarmaPulse", currency: "PEN", amount: orden.amount, order: orden.orden_id },
-      client: { email: correo },
-      options: { lang: "es", installments: true, modal: true, paymentMethods: { tarjeta: true, yape: true } },
-      appearance: { theme: "default" },
-    });
-    checkout.culqi = async function () {
-      if (!checkout.token) {
-        checkoutError.textContent = checkout.error?.user_message || "No se pudo validar el medio de pago.";
-        checkoutError.classList.remove("hidden");
-        return;
-      }
-      btnPagarCulqi.disabled = true;
-      btnPagarCulqi.textContent = "Confirmando pago...";
-      try {
-        const respuesta = await fetch("/api/checkout/pagar", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
-          body: JSON.stringify({
-            token: checkout.token.id, orden_firma: orden.orden_firma,
-            installments: checkout.token.installments || "",
-            nombre: checkoutNombre.value.trim(), dni: checkoutDni.value.trim(),
-            telefono: checkoutTelefono.value.trim(), distrito: checkoutDistrito.value,
-            direccion: checkoutDireccion.value.trim(), productos: carrito,
-          }),
-        });
-        const data = await respuesta.json();
-        if (!data.ok) throw new Error(data.error || "No se pudo completar el pago.");
-        localStorage.removeItem(CLAVE_CARRITO);
-        carrito = [];
-        renderizarCarrito();
-        checkoutError.textContent = data.comprobante_enviado
-          ? `¡Compra realizada con éxito! Enviamos el comprobante a ${correo}.`
-          : `${data.mensaje} Código de operación: ${data.cargo_id}.`;
-        checkoutError.classList.remove("hidden", "border-red-200", "bg-red-50", "text-red-700");
-        checkoutError.classList.add("border-green-200", "bg-green-50", "text-green-700");
-      } catch (error) {
-        checkoutError.textContent = error.message;
-        checkoutError.classList.remove("hidden");
-      } finally {
-        btnPagarCulqi.disabled = false;
-        btnPagarCulqi.innerHTML = '<i class="fa-solid fa-lock"></i> Pagar con tarjeta o Yape';
-      }
-    };
-    checkout.open();
-    btnPagarCulqi.disabled = false;
-    btnPagarCulqi.innerHTML = '<i class="fa-solid fa-lock"></i> Pagar con tarjeta o Yape';
   });
+
 
   // -------------------------------------------------------
   // Cargar la configuración de pago y delivery.
@@ -655,8 +973,9 @@
       const data = await respuesta.json();
       if (data.ok) {
         configServicio = {
-          culqi_public_key: data.culqi_public_key || "",
+          mercado_pago_public_key: data.mercado_pago_public_key || "",
           pasarela_configurada: data.pasarela_configurada === true,
+          geocodificador_configurado: data.geocodificador_configurado === true,
           zona_delivery: data.zona_delivery || configServicio.zona_delivery,
           tiempo_delivery_minutos: data.tiempo_delivery_minutos || configServicio.tiempo_delivery_minutos,
           costo_delivery: data.costo_delivery != null ? data.costo_delivery : configServicio.costo_delivery,

@@ -44,12 +44,17 @@
       </div>
 
       <div class="mt-5 space-y-3">
-        <label class="block text-sm font-semibold text-slate-600">Nombre completo
-          <input id="checkoutNombre" required maxlength="120" autocomplete="name" class="mt-1 w-full border border-slate-200 rounded-xl px-4 py-3" placeholder="Tu nombre y apellido">
-        </label>
         <label class="block text-sm font-semibold text-slate-600">DNI
-          <input id="checkoutDni" required inputmode="numeric" pattern="[0-9]{8}" maxlength="8" class="mt-1 w-full border border-slate-200 rounded-xl px-4 py-3" placeholder="8 dígitos">
+          <input id="checkoutDni" required inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="off" class="mt-1 w-full border border-slate-200 rounded-xl px-4 py-3" placeholder="8 dígitos">
         </label>
+        <label class="block text-sm font-semibold text-slate-600">Apellidos
+          <input id="checkoutApellidos" required maxlength="80" autocomplete="family-name" class="mt-1 w-full border border-slate-200 rounded-xl px-4 py-3" placeholder="Tus apellidos">
+        </label>
+        <label class="block text-sm font-semibold text-slate-600">Nombres
+          <input id="checkoutNombres" required maxlength="80" autocomplete="given-name" class="mt-1 w-full border border-slate-200 rounded-xl px-4 py-3" placeholder="Tus nombres">
+        </label>
+        <p class="-mt-2 text-xs text-slate-500">Ingresa tus apellidos y nombres tal como aparecen en tu DNI.</p>
+        <p class="text-xs text-slate-500">Cinco fallos de identidad bloquean permanentemente tu cuenta y el DNI.</p>
         <label class="block text-sm font-semibold text-slate-600">Teléfono
           <input id="checkoutTelefono" required inputmode="numeric" pattern="9[0-9]{8}" maxlength="9" autocomplete="tel-national" class="mt-1 w-full border border-slate-200 rounded-xl px-4 py-3" placeholder="9 dígitos">
         </label>
@@ -62,13 +67,22 @@
           </select>
         </label>
         <label class="block text-sm font-semibold text-slate-600">Dirección de entrega
-          <input id="checkoutDireccion" required maxlength="250" autocomplete="street-address" class="mt-1 w-full border border-slate-200 rounded-xl px-4 py-3" placeholder="Avenida, calle y número">
+          <input id="checkoutDireccion" required maxlength="250" autocomplete="off" class="mt-1 w-full border border-slate-200 rounded-xl px-4 py-3" placeholder="Calle, número y referencia de entrega">
+          <input id="checkoutPlaceId" type="hidden">
+          <input id="checkoutDireccionValidacion" type="hidden">
         </label>
+        <p id="checkoutDireccionEstado" class="-mt-2 text-xs text-slate-500" aria-live="polite">Busca tu calle o marca el punto de entrega directamente en el mapa.</p>
+        <div id="checkoutDireccionSugerencias" class="hidden max-h-52 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg" role="listbox" aria-label="Ubicaciones sugeridas"></div>
+        <div id="checkoutMapa" class="checkout-mapa" role="region" aria-label="Mapa del punto de entrega" aria-describedby="checkoutMapaAyuda"></div>
+        <p id="checkoutMapaAyuda" class="text-xs text-slate-500">Solo San Borja, San Luis y La Victoria. Marca tu puerta dentro del área resaltada; fuera de ella no hay reparto.</p>
+        <button type="button" id="checkoutUsarCentro" class="text-sm font-semibold text-fpGreenDark underline">Elegir el centro del mapa</button>
         <p id="checkoutEmail" class="text-xs text-slate-500"></p>
         <div id="checkoutError" class="hidden text-sm rounded-lg px-3 py-2 border border-red-200 bg-red-50 text-red-700" role="alert"></div>
-        <button type="button" id="btnPagarCulqi" class="w-full inline-flex items-center justify-center gap-2 bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">
-          <i class="fa-solid fa-lock"></i> Pagar con tarjeta
+        <button type="button" id="btnPagarMercadoPago" class="w-full inline-flex items-center justify-center gap-2 bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">
+          <i class="fa-solid fa-lock"></i> Continuar con Mercado Pago
         </button>
+        <div id="mercadoPagoTarjeta" class="hidden" aria-label="Pago con tarjeta en Mercado Pago"></div>
+        <div id="mercadoPagoEstado" class="hidden" aria-label="Estado del pago en Mercado Pago"></div>
         <p class="text-xs text-slate-400 text-center">Recibirás el comprobante en el correo de tu cuenta al confirmarse el pago.</p>
       </div>
     </div>

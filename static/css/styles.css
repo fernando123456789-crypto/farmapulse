@@ -131,10 +131,37 @@ body {
 }
 
 /* ---------- Card Mi Receta ---------- */
+.checkout-mapa {
+  height: 260px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  z-index: 0;
+}
+.checkout-mapa .leaflet-control-attribution {
+  font-size: 10px;
+}
+.checkout-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #0f766e;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px #0005;
+  font-size: 18px;
+}
+
 .receta-card {
   border: 1px solid #eef2f1;
   border-radius: 14px;
   padding: 14px 16px;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+.mercado-pago-challenge {
+  display: block;
+  width: 100%;
+  height: 540px;
+  border: 0;
 }

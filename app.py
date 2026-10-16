@@ -9,7 +9,7 @@ Este servidor expone:
     scrapers/registry.py (Inkafarma, Mifarma, ...). Agregar una farmacia
     nueva no requiere tocar este archivo — ver scrapers/base.py.
   - Autenticación con Supabase Auth (correo + contraseña).
-  - Checkout de pagos con Culqi y comprobantes por correo.
+  - Checkout de pagos con Mercado Pago y comprobantes por correo.
   - Algoritmo de ordenamiento/ahorro por precio unitario.
   - Integración con Supabase para guardar/consultar "listas de receta".
 
@@ -21,19 +21,26 @@ Luego abrir http://127.0.0.1:5000
 """
 
 import os
+import hashlib
+import hmac
 import random
 import re
 import smtplib
+import ssl
+import sqlite3
 import time
 import uuid
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from functools import wraps
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_talisman import Talisman
@@ -41,11 +48,18 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 from flask_wtf.csrf import CSRFProtect
+from security import validar_contrasena
+from identity_security import IdentitySecurity
+from delivery_location import district_for_point
+from payment_ledger import PaymentLedger
+from mercado_pago import ORDER_ID, crear_orden, leer_orden
 
 # ---------------------------------------------------------------------------
 # Configuración inicial
 # ---------------------------------------------------------------------------
-load_dotenv()
+# Cargar el archivo junto a la aplicación, aunque Flask se inicie desde otra
+# carpeta (por ejemplo, desde un acceso directo o un proceso de desarrollo).
+load_dotenv(Path(__file__).resolve().with_name(".env"))
 
 app = Flask(__name__)
 csrf = CSRFProtect(app)
@@ -59,6 +73,34 @@ if not SECRET_KEY:
         "Ejemplo: SECRET_KEY=<clave-segura-de-32-caracteres>"
     )
 app.config["SECRET_KEY"] = SECRET_KEY
+identity_security = IdentitySecurity(
+    os.getenv("IDENTITY_SECURITY_DB") or Path(app.instance_path) / "identity_security.sqlite3",
+    os.getenv("IDENTITY_SECURITY_KEY") or SECRET_KEY,
+)
+payment_ledger = PaymentLedger(
+    os.getenv("PAYMENTS_DB") or Path(app.instance_path) / "payments.sqlite3", SECRET_KEY,
+)
+
+
+@app.errorhandler(sqlite3.Error)
+def manejar_error_seguridad_identidad(error):
+    app.logger.error("El almacenamiento de seguridad de identidad no está disponible")
+    return jsonify({"ok": False, "error": "No se pudo comprobar el acceso. Intenta nuevamente"}), 503
+
+
+@app.errorhandler(HTTPException)
+def manejar_error_http_api(error: HTTPException):
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": error.description}), error.code
+    return error
+
+
+@app.errorhandler(500)
+def manejar_error_interno_api(error):
+    if request.path.startswith("/api/"):
+        app.logger.exception("Error interno en la ruta %s", request.path, exc_info=error)
+        return jsonify({"ok": False, "error": "Ocurrió un error interno. Intenta nuevamente."}), 500
+    return error
 
 # =========================================================================
 # Seguridad: Rate limiting contra fuerza bruta en autenticación
@@ -79,9 +121,9 @@ Talisman(
     strict_transport_security_max_age=31536000,
     content_security_policy={
         "default-src": "'self'",
-        "script-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "kit.fontawesome.com", "js.culqi.com"],
-        "connect-src": ["'self'", "https://api.culqi.com"],
-        "frame-src": ["'self'", "https://checkout.culqi.com"],
+        "script-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "kit.fontawesome.com", "https://*.mercadopago.com", "https://*.mlstatic.com"],
+        "connect-src": ["'self'", "https://*.mercadopago.com", "https://*.mercadopago.com.pe", "https://*.mlstatic.com"],
+        "frame-src": ["'self'", "https://*.mercadopago.com", "https://*.mercadopago.com.pe", "https://*.mercadolibre.com", "https://*.mlstatic.com"],
         "style-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
         "img-src": ["'self'", "data:", "https:"],
         "font-src": ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
@@ -90,15 +132,29 @@ Talisman(
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_ADMIN_KEY = (
+    os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+).strip()
+RENIEC_TOKEN = os.getenv("RENIEC_TOKEN", "").strip()
 
-CULQI_PUBLIC_KEY = os.getenv("CULQI_PUBLIC_KEY", "")
-CULQI_SECRET_KEY = os.getenv("CULQI_SECRET_KEY", "")
+MERCADO_PAGO_PUBLIC_KEY = os.getenv("MERCADO_PAGO_PUBLIC_KEY", "").strip()
+MERCADO_PAGO_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_ACCESS_TOKEN", "").strip()
+MERCADO_PAGO_WEBHOOK_SECRET = os.getenv("MERCADO_PAGO_WEBHOOK_SECRET", "").strip()
+MERCADO_PAGO_NOTIFICATION_URL = os.getenv("MERCADO_PAGO_NOTIFICATION_URL", "").strip()
 MAIL_HOST = os.getenv("MAIL_HOST", "")
 MAIL_PORT = int(os.getenv("MAIL_PORT", "587"))
 MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
 MAIL_FROM = os.getenv("MAIL_FROM", MAIL_USERNAME)
 _COTIZACIONES = URLSafeTimedSerializer(os.getenv("SECRET_KEY", ""), salt="farmapulse-cotizaciones")
+_VALIDACION_DIRECCION = URLSafeTimedSerializer(
+    os.getenv("SECRET_KEY", ""), salt="farmapulse-direccion-google"
+)
+
+def _pagos_configurados():
+    return bool(MERCADO_PAGO_PUBLIC_KEY and MERCADO_PAGO_ACCESS_TOKEN
+                and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM)
+
 
 # ---------------------------------------------------------------------------
 # Cliente Supabase (con manejo de errores si las credenciales no son válidas
@@ -150,12 +206,17 @@ def _supabase_configurado() -> bool:
     return bool(SUPABASE_URL and SUPABASE_KEY and "tu-proyecto" not in SUPABASE_URL)
 
 
-def auth_registrar(email: str, password: str) -> dict:
+def auth_registrar(email: str, password: str, redirect_to: str) -> dict:
     respuesta = requests.post(
-        _auth_url("/signup"), headers=_auth_headers(),
+        _auth_url("/signup"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
         json={"email": email, "password": password}, timeout=AUTH_TIMEOUT,
     )
-    datos = respuesta.json()
+    try:
+        datos = respuesta.json()
+    except requests.exceptions.JSONDecodeError as exc:
+        raise requests.RequestException(
+            "El servicio de autenticación devolvió una respuesta inválida"
+        ) from exc
     if respuesta.status_code >= 400:
         raise ValueError(datos.get("msg") or datos.get("error_description") or "No se pudo registrar la cuenta")
     return datos
@@ -166,7 +227,12 @@ def auth_iniciar_sesion(email: str, password: str) -> dict:
         _auth_url("/token?grant_type=password"), headers=_auth_headers(),
         json={"email": email, "password": password}, timeout=AUTH_TIMEOUT,
     )
-    datos = respuesta.json()
+    try:
+        datos = respuesta.json()
+    except requests.exceptions.JSONDecodeError as exc:
+        raise requests.RequestException(
+            "El servicio de autenticación devolvió una respuesta inválida"
+        ) from exc
     if respuesta.status_code >= 400:
         raise ValueError(datos.get("error_description") or datos.get("msg") or "Credenciales inválidas")
     return datos
@@ -183,6 +249,68 @@ def auth_obtener_usuario(access_token: str) -> dict:
     return respuesta.json()
 
 
+def consultar_dni_reniec(dni: str) -> dict:
+    """Consulta nombres por DNI sin exponer el token del proveedor al navegador."""
+    respuesta = requests.get(
+        "https://api.decolecta.com/v1/reniec/dni",
+        params={"numero": dni},
+        headers={"Authorization": f"Bearer {RENIEC_TOKEN}", "Accept": "application/json"},
+        timeout=8,
+    )
+    if respuesta.status_code in (400, 404):
+        raise LookupError("No encontramos datos para ese DNI")
+    respuesta.raise_for_status()
+    datos = respuesta.json()
+    if not isinstance(datos, dict):
+        raise ValueError("Respuesta de consulta DNI inválida")
+
+    dni_devuelto = str(datos.get("document_number") or "")
+    nombre = str(datos.get("full_name") or "").strip()
+    if dni_devuelto != dni or not 2 <= len(nombre) <= 150:
+        raise ValueError("Los datos recibidos no coinciden con el DNI consultado")
+    return {"dni": dni_devuelto, "nombre": nombre, "fuente": "Decolecta"}
+
+
+def _normalizar_nombre_persona(nombre: str) -> str:
+    """Normaliza acentos, espacios y signos para comparar datos de identidad."""
+    sin_acentos = unicodedata.normalize("NFKD", nombre)
+    texto = "".join(caracter for caracter in sin_acentos if not unicodedata.combining(caracter))
+    return " ".join(re.sub(r"[^A-Z0-9 ]", " ", texto.upper()).split())
+
+
+def _identificadores_seguridad(usuario, cliente=None):
+    identificadores = {
+        "usuario": usuario.get("id"),
+        "correo": (usuario.get("email") or "").strip().lower(),
+    }
+    if cliente:
+        identificadores["dni"] = cliente["dni"]
+        identificadores["identidad"] = f"{cliente['dni']}:{_normalizar_nombre_persona(cliente['nombre'])}"
+    return identificadores
+
+
+def _acceso_bloqueado(usuario, cliente=None):
+    return identity_security.status(_identificadores_seguridad(usuario, cliente))["blocked"]
+
+
+def _respuesta_acceso_bloqueado():
+    return jsonify({
+        "ok": False, "bloqueado": True, "intentos_restantes": 0,
+        "error": "Acceso bloqueado permanentemente tras cinco fallos de validación de identidad.",
+    }), 403
+
+
+def _registrar_fallo_identidad(usuario, cliente):
+    estado = identity_security.record_failure(_identificadores_seguridad(usuario, cliente))
+    if estado["blocked"]:
+        return _respuesta_acceso_bloqueado()
+    restantes = estado["remaining"]
+    return jsonify({
+        "ok": False, "bloqueado": False, "intentos_restantes": restantes,
+        "error": f"Los apellidos y nombres no coinciden con el DNI. Te quedan {restantes} intento(s) antes del bloqueo permanente.",
+    }), 422
+
+
 def sesion_opcional(f):
     """Adjunta g.usuario si hay un Bearer token válido. Nunca bloquea la
     petición: sin token (o inválido), la ruta sigue en modo invitado."""
@@ -196,6 +324,8 @@ def sesion_opcional(f):
                 g.usuario = auth_obtener_usuario(token)
             except Exception:
                 g.usuario = None
+        if g.usuario and _acceso_bloqueado(g.usuario):
+            return _respuesta_acceso_bloqueado()
         return f(*args, **kwargs)
     return envoltura
 
@@ -220,6 +350,8 @@ def sesion_requerida(f):
                 "error": "Debes iniciar sesión para usar esta función",
                 "requiere_login": True,
             }), 401
+        if request.endpoint != "api_auth_eliminar" and _acceso_bloqueado(g.usuario):
+            return _respuesta_acceso_bloqueado()
         return f(*args, **kwargs)
     return envoltura
 
@@ -399,30 +531,34 @@ def api_config():
     y datos del servicio de delivery mostrados en el checkout)."""
     return jsonify({
         "ok": True,
-        "culqi_public_key": CULQI_PUBLIC_KEY,
-        "pasarela_configurada": bool(CULQI_PUBLIC_KEY and CULQI_SECRET_KEY and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM),
+        "mercado_pago_public_key": MERCADO_PAGO_PUBLIC_KEY,
+        "pasarela_configurada": _pagos_configurados(),
         "zona_delivery": ZONA_DELIVERY,
         "tiempo_delivery_minutos": TIEMPO_DELIVERY_MINUTOS,
         "costo_delivery": COSTO_DELIVERY,
+        "geocodificador_configurado": True,
     })
 
 
 # ---------------------------------------------------------------------------
-# Pagos con Culqi y comprobantes por correo
+# Pagos con Mercado Pago y comprobantes por correo
 # ---------------------------------------------------------------------------
-def _enviar_comprobante(email: str, nombre: str, dni: str, cliente: dict, productos: list, subtotal: Decimal, delivery: Decimal, total: Decimal, cargo_id: str) -> None:
+def _enviar_comprobante(email: str, nombre: str, dni: str, cliente: dict, productos: list, subtotal: Decimal, delivery: Decimal, total: Decimal, pago_id: str) -> None:
     mensaje = EmailMessage()
-    mensaje["Subject"] = f"Comprobante de compra FarmaPulse - {cargo_id}"
+    prueba = cliente.get("compra_prueba") is True
+    mensaje["Subject"] = ("[PRUEBA] " if prueba else "") + f"Comprobante de compra FarmaPulse - {pago_id}"
     mensaje["From"] = MAIL_FROM
     mensaje["To"] = email
-    lineas = [f"Hola {nombre}, tu compra fue realizada con éxito.", "", f"Comprobante de pago: {cargo_id}", f"Nombre: {nombre}", f"DNI: {dni}", f"Correo: {email}", "", "Productos:"]
+    lineas = [f"Hola {nombre}, tu compra fue realizada con éxito.", "", f"Comprobante de pago: {pago_id}", f"Nombre: {nombre}", f"DNI: {dni}", f"Correo: {email}", "", "Productos:"]
+    if prueba:
+        lineas[:0] = ["PRUEBA DE INTEGRACIÓN: no se realizó un cobro real ni un pedido para entregar.", ""]
     lineas.extend(f"- {p['medicamento']} ({p['presentacion']}) en {p['farmacia']}: S/ {p['precio']}" for p in productos)
     lineas.extend(["", f"Dirección de entrega: {cliente['direccion']}, {cliente['distrito']}",
                    f"Subtotal: S/ {subtotal:.2f}", f"Delivery: S/ {delivery:.2f}",
-                   f"Total pagado: S/ {total:.2f}", "", "Este correo confirma el pago procesado por Culqi."])
+                   f"Total pagado: S/ {total:.2f}", "", "Este correo confirma el pago procesado por Mercado Pago."])
     mensaje.set_content("\n".join(lineas))
     with smtplib.SMTP(MAIL_HOST, MAIL_PORT, timeout=15) as servidor:
-        servidor.starttls()
+        servidor.starttls(context=ssl.create_default_context())
         servidor.login(MAIL_USERNAME, MAIL_PASSWORD)
         servidor.send_message(mensaje)
 
@@ -444,21 +580,143 @@ def _datos_checkout(items: list):
     return productos, subtotal, delivery, subtotal + delivery
 
 
+def _normalizar_texto(texto: str) -> str:
+    sin_acentos = unicodedata.normalize("NFKD", texto)
+    return "".join(caracter for caracter in sin_acentos if not unicodedata.combining(caracter)).casefold().strip()
+
+
+def _consultar_sugerencias_direccion(texto: str, distrito: str = "") -> list:
+    respuesta = requests.get(
+        "https://photon.komoot.io/api/",
+        params={"q": f"{texto}, {distrito}, Lima, Peru", "limit": 30,
+                "lat": -12.085, "lon": -77.01, "zoom": 15,
+                "bbox": "-77.06,-12.14,-76.96,-12.04"},
+        headers={"User-Agent": "FarmaPulse/1.0", "Accept-Language": "es"}, timeout=8,
+    )
+    respuesta.raise_for_status()
+    datos = respuesta.json()
+    if not isinstance(datos, dict):
+        raise ValueError("Respuesta inválida del servicio de mapas")
+    palabras_omitidas = {"calle", "avenida", "av", "jiron", "jr", "pasaje", "psje", "de", "del", "la", "las", "los", "el"}
+    palabras = set(re.findall(r"[a-z]+", _normalizar_texto(texto))) - palabras_omitidas
+    numero_buscado = re.search(r"\b\d+[a-z]?\b", _normalizar_texto(texto))
+    sugerencias, vistos = [], set()
+    for feature in datos.get("features", []):
+        if not isinstance(feature, dict):
+            continue
+        propiedades = feature.get("properties") or {}
+        coordenadas = (feature.get("geometry") or {}).get("coordinates") or []
+        if not isinstance(propiedades, dict) or len(coordenadas) != 2:
+            continue
+        longitud, latitud = coordenadas
+        distrito_real = district_for_point(latitud, longitud)
+        if not distrito_real or (distrito and distrito_real != distrito):
+            continue
+        tipo = propiedades.get("type")
+        if tipo in {"country", "state", "county", "city", "district", "locality"}:
+            continue
+        calle = str(propiedades.get("street") or "").strip()
+        numero = str(propiedades.get("housenumber") or "").strip()
+        nombre = str(propiedades.get("name") or calle).strip()
+        if not calle and tipo not in {"street", "house"}:
+            continue
+        palabras_calle = set(re.findall(r"[a-z]+", _normalizar_texto(calle or nombre)))
+        if palabras and len(palabras & palabras_calle) / len(palabras) < 0.6:
+            continue
+        if numero_buscado and numero and _normalizar_texto(numero) != numero_buscado.group():
+            continue
+        principal = f"{calle} {numero}".strip() if calle else nombre
+        if not principal:
+            continue
+        descripcion = f"{principal}, {distrito_real}"
+        clave = (descripcion, round(latitud, 5), round(longitud, 5))
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        sugerencias.append({
+            "descripcion": descripcion, "latitud": latitud, "longitud": longitud,
+            "distrito": distrito_real, "direccion_precisa": bool(calle and numero),
+        })
+    return sorted(sugerencias, key=lambda lugar: not lugar["direccion_precisa"])[:6]
+
+
+@app.route("/api/direcciones/sugerencias", methods=["POST"])
+@csrf.exempt
+@limiter.limit("20 per minute")
+@sesion_requerida
+def api_sugerencias_direccion():
+    body = request.get_json(silent=True) or {}
+    texto = body.get("texto", "") if isinstance(body, dict) else ""
+    if not isinstance(texto, str) or not 3 <= len(texto.strip()) <= 120:
+        return jsonify({"ok": False, "error": "Escribe al menos 3 caracteres de la dirección"}), 400
+    try:
+        distrito = body.get("distrito") or ""
+        if distrito and distrito not in ZONA_DELIVERY:
+            return jsonify({"ok": False, "error": "Selecciona un distrito de reparto"}), 400
+        sugerencias = _consultar_sugerencias_direccion(texto.strip(), distrito)
+    except (requests.RequestException, ValueError):
+        app.logger.warning("No se pudieron consultar sugerencias del geocodificador")
+        return jsonify({"ok": False, "error": "No se pudo consultar el mapa abierto. Intenta nuevamente"}), 502
+    return jsonify({"ok": True, "sugerencias": sugerencias})
+
+
+@app.route("/api/direcciones/validar", methods=["POST"])
+@csrf.exempt
+@limiter.limit("10 per minute")
+@sesion_requerida
+def api_validar_direccion():
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "La solicitud no es válida"}), 400
+    latitud, longitud = body.get("latitud"), body.get("longitud")
+    direccion = body.get("direccion")
+    distrito = district_for_point(latitud, longitud)
+    if not distrito:
+        return jsonify({"ok": False, "error": "Ese punto está fuera de nuestra zona de reparto"}), 400
+    if not isinstance(direccion, str) or not 5 <= len(direccion.strip()) <= 250:
+        return jsonify({"ok": False, "error": "Ingresa la calle, número o referencia de entrega"}), 400
+    lugar = {
+        "place_id": f"punto:{latitud:.6f},{longitud:.6f}", "direccion": direccion.strip(),
+        "distrito": distrito, "latitud": latitud, "longitud": longitud,
+    }
+    return jsonify({"ok": True, **lugar, "validacion": _VALIDACION_DIRECCION.dumps(lugar)})
+
+
 def _datos_cliente_checkout(body: dict) -> dict:
-    nombre = body.get("nombre")
+    apellidos = body.get("apellidos")
+    nombres = body.get("nombres")
     dni = body.get("dni")
     telefono = body.get("telefono")
     distrito = body.get("distrito")
     direccion = body.get("direccion")
-    if (not isinstance(nombre, str) or not 2 <= len(nombre.strip()) <= 120
+    place_id = body.get("place_id")
+    token_direccion = body.get("direccion_validacion")
+    if (not isinstance(apellidos, str) or not 2 <= len(apellidos.strip()) <= 80
+            or not isinstance(nombres, str) or not 2 <= len(nombres.strip()) <= 80
             or not isinstance(dni, str) or not re.fullmatch(r"\d{8}", dni)
             or not isinstance(telefono, str) or not re.fullmatch(r"9\d{8}", telefono)
             or distrito not in ZONA_DELIVERY
-            or not isinstance(direccion, str) or not 5 <= len(direccion.strip()) <= 250):
-        raise ValueError("Completa los datos de entrega, nombre y DNI para continuar")
+            or not isinstance(direccion, str) or not 5 <= len(direccion.strip()) <= 250
+            or not isinstance(place_id, str) or not isinstance(token_direccion, str)):
+        raise ValueError("Completa los datos y selecciona una dirección del mapa")
+    apellidos_limpios, nombres_limpios = apellidos.strip(), nombres.strip()
+    try:
+        direccion_verificada = _VALIDACION_DIRECCION.loads(token_direccion, max_age=1800)
+    except (BadSignature, SignatureExpired, TypeError):
+        raise ValueError("La selección de la dirección venció. Búscala nuevamente en el mapa") from None
+    if (not isinstance(direccion_verificada, dict)
+            or district_for_point(direccion_verificada.get("latitud"), direccion_verificada.get("longitud")) != distrito
+            or direccion_verificada.get("place_id") != place_id
+            or direccion_verificada.get("direccion") != direccion.strip()
+            or direccion_verificada.get("distrito") != distrito
+            or distrito not in ZONA_DELIVERY):
+        raise ValueError("La dirección o el distrito no coinciden con la selección del mapa")
     return {
-        "nombre": nombre.strip(), "dni": dni, "telefono": telefono,
-        "distrito": distrito, "direccion": direccion.strip(),
+        "apellidos": apellidos_limpios, "nombres": nombres_limpios,
+        "nombre": f"{apellidos_limpios} {nombres_limpios}", "dni": dni,
+        "telefono": telefono,
+        "distrito": distrito, "direccion": direccion.strip(), "place_id": place_id,
+        "latitud": direccion_verificada["latitud"], "longitud": direccion_verificada["longitud"],
     }
 
 
@@ -467,7 +725,7 @@ def _datos_cliente_checkout(body: dict) -> dict:
 @limiter.limit("5 per minute")
 @sesion_requerida
 def api_checkout_orden():
-    if not (CULQI_PUBLIC_KEY and CULQI_SECRET_KEY and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM):
+    if not _pagos_configurados():
         return jsonify({"ok": False, "error": "La pasarela o el correo no están configurados"}), 503
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
@@ -477,34 +735,38 @@ def api_checkout_orden():
     except ValueError as error:
         return jsonify({"ok": False, "error": str(error)}), 400
     nombre, dni = cliente["nombre"], cliente["dni"]
+    if _acceso_bloqueado(g.usuario, cliente):
+        return _respuesta_acceso_bloqueado()
     email = (g.usuario.get("email") or "").strip().lower()
-    if len(nombre) < 2 or len(nombre) > 120 or not dni.isdigit() or len(dni) != 8 or not email:
-        return jsonify({"ok": False, "error": "Ingresa tu nombre y un DNI válido de 8 dígitos"}), 400
+    if len(nombre) < 2 or len(nombre) > 161 or not dni.isdigit() or len(dni) != 8 or not email:
+        return jsonify({"ok": False, "error": "Ingresa tus apellidos, nombres y un DNI válido de 8 dígitos"}), 400
     try:
         _, _, _, total = _datos_checkout(body.get("productos") or [])
     except (BadSignature, SignatureExpired, KeyError, InvalidOperation, TypeError, ValueError):
         return jsonify({"ok": False, "error": "El carrito cambió o la cotización venció. Actualiza e intenta de nuevo"}), 400
 
     centimos = int(total * 100)
-    if centimos < 600 or centimos > 700000:
-        return jsonify({"ok": False, "error": "El total está fuera del rango permitido por Culqi"}), 400
-    nombres = nombre.split(maxsplit=1)
+    if centimos < 1 or centimos > 700000:
+        return jsonify({"ok": False, "error": "El total está fuera del rango permitido por Mercado Pago"}), 400
+    if not RENIEC_TOKEN:
+        return jsonify({"ok": False, "error": "La validación del DNI no está disponible en este momento"}), 503
     try:
-        respuesta = requests.post("https://api.culqi.com/v2/orders",
-            headers={"Authorization": f"Bearer {CULQI_SECRET_KEY}", "Content-Type": "application/json"},
-            json={"amount": centimos, "currency_code": "PEN", "description": "Compra FarmaPulse",
-                  "order_number": f"fp-{uuid.uuid4().hex}", "expiration_date": str(int(time.time()) + 1800),
-                  "client_details": {"first_name": nombres[0], "last_name": nombres[-1], "email": email,
-                                     "phone_number": f"+51{cliente['telefono']}"},
-                  "metadata": {"dni": dni, "distrito": cliente["distrito"], "direccion": cliente["direccion"]}}, timeout=20)
-        datos = respuesta.json()
+        persona = consultar_dni_reniec(dni)
+    except LookupError:
+        return _registrar_fallo_identidad(g.usuario, cliente)
+    except requests.Timeout:
+        return jsonify({"ok": False, "error": "La consulta de DNI tardó demasiado. Intenta nuevamente"}), 504
     except (requests.RequestException, ValueError):
-        return jsonify({"ok": False, "error": "No se pudo preparar el pago con Culqi"}), 502
-    if respuesta.status_code >= 400 or not isinstance(datos, dict) or not datos.get("id", "").startswith(("ord_test_", "ord_live_")):
-        mensaje = (datos.get("user_message") or datos.get("merchant_message")) if isinstance(datos, dict) else None
-        return jsonify({"ok": False, "error": mensaje or "Culqi no pudo preparar el pago"}), 502
-    firma = _COTIZACIONES.dumps({**cliente, "id": datos["id"], "amount": centimos, "email": email})
-    return jsonify({"ok": True, "orden_id": datos["id"], "orden_firma": firma, "amount": centimos})
+        app.logger.warning("No se pudo completar la consulta de DNI con el proveedor")
+        return jsonify({"ok": False, "error": "No se pudo validar la identidad. Intenta nuevamente"}), 502
+    if _normalizar_nombre_persona(nombre) != _normalizar_nombre_persona(persona["nombre"]):
+        return _registrar_fallo_identidad(g.usuario, cliente)
+    if _acceso_bloqueado(g.usuario, cliente):
+        return _respuesta_acceso_bloqueado()
+    orden_id = f"fp_{uuid.uuid4().hex}"
+    firma = _COTIZACIONES.dumps({**cliente, "id": orden_id, "amount": centimos, "email": email,
+                               "identidad_validada": True, "usuario_id": g.usuario.get("id")})
+    return jsonify({"ok": True, "orden_id": orden_id, "orden_firma": firma, "amount": centimos})
 
 
 @app.route("/api/checkout/pagar", methods=["POST"])
@@ -512,7 +774,7 @@ def api_checkout_orden():
 @limiter.limit("5 per minute")
 @sesion_requerida
 def api_checkout_pagar():
-    if not (CULQI_PUBLIC_KEY and CULQI_SECRET_KEY and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM):
+    if not _pagos_configurados():
         return jsonify({"ok": False, "error": "La pasarela o el correo no están configurados"}), 503
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
@@ -522,77 +784,182 @@ def api_checkout_pagar():
     except ValueError as error:
         return jsonify({"ok": False, "error": str(error)}), 400
     nombre, dni = cliente["nombre"], cliente["dni"]
-    token, items = (body.get("token") or "").strip(), body.get("productos") or []
-    orden_firma = (body.get("orden_firma") or "").strip()
+    if _acceso_bloqueado(g.usuario, cliente):
+        return _respuesta_acceso_bloqueado()
+    token = body.get("token")
+    method = body.get("payment_method_id")
+    payment_type = body.get("payment_type_id")
+    issuer = body.get("issuer_id")
+    installments = body.get("installments")
+    if (not isinstance(token, str) or not re.fullmatch(r"[a-fA-F0-9]{32}", token)
+            or not isinstance(method, str) or not re.fullmatch(r"[a-zA-Z0-9_]{1,40}", method)
+            or payment_type not in {"credit_card", "debit_card"}
+            or isinstance(installments, bool) or not re.fullmatch(r"\d{1,2}", str(installments))
+            or not 1 <= int(installments) <= 48
+            or (issuer not in (None, "") and not re.fullmatch(r"\d{1,20}", str(issuer)))):
+        return jsonify({"ok": False, "error": "Los datos del pago con tarjeta no son válidos"}), 400
+    orden_firma = body.get("orden_firma")
+    if not isinstance(orden_firma, str):
+        return jsonify({"ok": False, "error": "La orden no es válida"}), 400
     email = (g.usuario.get("email") or "").strip().lower()
-    if len(nombre) < 2 or len(nombre) > 120 or not dni.isdigit() or len(dni) != 8:
-        return jsonify({"ok": False, "error": "Ingresa tu nombre y un DNI válido de 8 dígitos"}), 400
-    if (not email or not token.startswith(("tkn_test_", "tkn_live_", "ype_test_", "ype_live_"))
-            or not orden_firma):
-        return jsonify({"ok": False, "error": "La sesión o el carrito no son válidos"}), 400
-
     try:
-        productos, subtotal, delivery, total = _datos_checkout(items)
+        productos, subtotal, delivery, total = _datos_checkout(body.get("productos") or [])
         orden = _COTIZACIONES.loads(orden_firma, max_age=1800)
-        if (orden.get("email") != email or orden.get("amount") != int(total * 100)
+        if (not isinstance(orden, dict) or orden.get("identidad_validada") is not True
+                or orden.get("email") != email or orden.get("amount") != int(total * 100)
                 or any(orden.get(campo) != valor for campo, valor in cliente.items())
-                or not orden.get("id", "").startswith(("ord_test_", "ord_live_"))):
-            raise ValueError("La orden no corresponde a esta compra")
+                or orden.get("usuario_id") != g.usuario.get("id")
+                or not orden.get("id", "").startswith("fp_")):
+            raise ValueError
     except (BadSignature, SignatureExpired, KeyError, InvalidOperation, TypeError, ValueError):
-        return jsonify({"ok": False, "error": "El carrito cambió o la cotización venció. Actualiza e intenta de nuevo"}), 400
+        return jsonify({"ok": False, "error": "La orden o la cotización no corresponden a esta compra"}), 400
 
-    if token.startswith(("ype_test_", "ype_live_")) and int(total * 100) > 200000:
-        return jsonify({"ok": False, "error": "Yape permite pagos de hasta S/ 2,000"}), 400
-
-    cuotas = body.get("installments")
-    if cuotas not in (None, "") and not token.startswith(("tkn_test_", "tkn_live_")):
-        return jsonify({"ok": False, "error": "Las cuotas solo están disponibles para pagos con tarjeta"}), 400
-    cargo = {"amount": int(total * 100), "currency_code": "PEN", "email": email, "source_id": token,
-             "capture": True, "description": "Compra FarmaPulse",
-             "metadata": {"dni": dni, "nombre": nombre, "order_id": orden["id"], "distrito": cliente["distrito"]}}
-    if cuotas not in (None, ""):
-        try:
-            cuotas = int(cuotas)
-            if cuotas < 2 or cuotas > 48:
-                raise ValueError
-            token_response = requests.get(f"https://api.culqi.com/v2/tokens/{token}",
-                headers={"Authorization": f"Bearer {CULQI_SECRET_KEY}"}, timeout=10)
-            token_data = token_response.json()
-            permitidas = token_data.get("iin", {}).get("installments_allowed", [])
-            if token_response.status_code >= 400 or cuotas not in permitidas:
-                return jsonify({"ok": False, "error": "Las cuotas seleccionadas no están disponibles para esta tarjeta"}), 400
-            cargo["installments"] = str(cuotas)
-        except (TypeError, ValueError, requests.RequestException):
-            return jsonify({"ok": False, "error": "No se pudieron validar las cuotas de la tarjeta"}), 400
-
-    nombres = nombre.split(maxsplit=1)
-    cargo["antifraud_details"] = {
-        "first_name": nombres[0], "last_name": nombres[-1],
-        "address": cliente["direccion"], "address_city": "Lima",
-        "country_code": "PE", "phone_number": int(cliente["telefono"]), "email": email,
-    }
+    previous = payment_ledger.claim(orden["id"], token, "", str(g.usuario["id"]))
+    if previous:
+        result, status = previous
+        return jsonify(result), status
+    payment_ledger.set_context(orden["id"], {
+        "email": email, "cliente": cliente, "productos": productos,
+        "subtotal": str(subtotal), "delivery": str(delivery), "total": str(total),
+    })
+    payload = crear_orden(orden["id"], total, email, cliente, token, method, payment_type, int(installments))
     try:
-        respuesta = requests.post("https://api.culqi.com/v2/charges",
-            headers={"Authorization": f"Bearer {CULQI_SECRET_KEY}", "Content-Type": "application/json"},
-            json=cargo, timeout=20)
+        respuesta = requests.post("https://api.mercadopago.com/v1/orders",
+            headers={"Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}", "Content-Type": "application/json",
+                     "X-Idempotency-Key": orden["id"]}, json=payload, timeout=20)
         datos = respuesta.json()
     except (requests.RequestException, ValueError):
-        return jsonify({"ok": False, "error": "No se pudo confirmar el pago con Culqi. Revisa tu estado de cuenta antes de reintentar"}), 502
-    if (respuesta.status_code >= 400 or not isinstance(datos, dict)
-            or datos.get("state", "").lower() not in {"exitosa", "captured", "paid"}
-            or datos.get("currency") != "PEN"
-            or datos.get("amount") != int(total * 100)):
-        mensaje = (datos.get("user_message") or datos.get("merchant_message")) if isinstance(datos, dict) else None
-        return jsonify({"ok": False, "error": mensaje or "Culqi no pudo procesar el pago"}), 402
+        return _pago_sin_confirmar(orden["id"])
+    if respuesta.status_code >= 500 or respuesta.status_code == 429 or not isinstance(datos, dict):
+        return _pago_sin_confirmar(orden["id"])
+    if respuesta.status_code >= 400:
+        result = {"ok": False, "estado": "rechazado", "pago_confirmado": False,
+                  "error": "Mercado Pago no pudo procesar la tarjeta. Revisa los datos o utiliza otra tarjeta"}
+        if respuesta.status_code in (401, 403):
+            result["error"] = "La configuración de Mercado Pago necesita revisión. Contacta a soporte"
+        payment_ledger.finish(orden["id"], "rejected", result, 402)
+        return jsonify(result), 402
+    return _procesar_resultado_mercado_pago(orden["id"], datos)
 
-    cargo_id = datos.get("id", "")
+
+def _pago_sin_confirmar(orden_id):
+    result = {"ok": False, "estado": "sin_confirmar", "referencia": orden_id,
+              "error": "No se pudo confirmar el resultado. No repitas el pago; contacta a soporte con la referencia " + orden_id}
+    payment_ledger.finish(orden_id, "unknown", result, 502)
+    return jsonify(result), 502
+
+
+def _procesar_resultado_mercado_pago(orden_id, datos):
+    record = payment_ledger.get(orden_id)
+    if not record or not record["context"]:
+        return jsonify({"ok": False, "error": "La orden no existe"}), 404
+    context = record["context"]
     try:
-        _enviar_comprobante(email, nombre, dni, cliente, productos, subtotal, delivery, total, cargo_id)
-    except (smtplib.SMTPException, OSError):
-        app.logger.exception("El pago %s fue exitoso, pero falló el envío del comprobante", cargo_id)
-        return jsonify({"ok": True, "pago_confirmado": True, "comprobante_enviado": False,
-                        "mensaje": "Pago aprobado; no se pudo enviar el comprobante por correo. Contacta a soporte.", "cargo_id": cargo_id})
-    return jsonify({"ok": True, "pago_confirmado": True, "comprobante_enviado": True, "cargo_id": cargo_id})
+        resultado = leer_orden(datos, orden_id, Decimal(context["total"]))
+    except (ValueError, InvalidOperation, KeyError, TypeError, AttributeError):
+        return _pago_sin_confirmar(orden_id)
+    pago_id, status = resultado["pago_id"], resultado["status"]
+    base = {"ok": False, "pago_id": pago_id, "orden_proveedor": resultado["orden_proveedor"],
+            "status": status, "status_detail": resultado["status_detail"],
+            "pago_confirmado": False, "referencia": orden_id}
+    if resultado["estado"] == "approved":
+        result = {**base, "ok": True, "estado": "aprobado", "pago_confirmado": True,
+                  "comprobante_enviado": False, "mensaje": "Pago aprobado; el comprobante está pendiente de envío"}
+        payment_ledger.settle(orden_id, "approved", result, 200)
+        return jsonify(_entregar_comprobante(orden_id)), 200
+    if resultado["estado"] == "pending":
+        result = {**base, "estado": "pendiente", "error": "Tu pago está pendiente de confirmación. No vuelvas a pagar"}
+        if resultado.get("challenge_url"):
+            result["challenge_url"] = resultado["challenge_url"]
+        saved, status_code, _ = payment_ledger.settle(orden_id, "pending", result, 202)
+        return jsonify(saved), status_code
+    if resultado["estado"] == "rejected":
+        result = {**base, "estado": "rechazado", "error": "El pago no fue aprobado. Revisa la tarjeta o utiliza otra"}
+        saved, status_code, _ = payment_ledger.settle(orden_id, "rejected", result, 402)
+        return jsonify(saved), status_code
+    return _pago_sin_confirmar(orden_id)
+
+
+def _entregar_comprobante(orden_id):
+    record = payment_ledger.get(orden_id)
+    if payment_ledger.claim_receipt(orden_id):
+        context, result = record["context"], record["response"]
+        cliente = {**context["cliente"], "compra_prueba": result["orden_proveedor"].startswith("ORDTST")}
+        try:
+            _enviar_comprobante(context["email"], cliente["nombre"], cliente["dni"], cliente,
+                context["productos"], Decimal(context["subtotal"]), Decimal(context["delivery"]),
+                Decimal(context["total"]), result["pago_id"])
+        except (smtplib.SMTPException, OSError):
+            app.logger.warning("No se pudo enviar el comprobante del pago %s", result["pago_id"])
+        else:
+            result.update(comprobante_enviado=True, mensaje="Tu compra fue realizada con éxito")
+            payment_ledger.finish(orden_id, "approved", result, 200)
+        finally:
+            payment_ledger.release_receipt(orden_id)
+    return payment_ledger.get(orden_id)["response"]
+
+
+@app.cli.command("reenviar-comprobantes")
+def reenviar_comprobantes():
+    """Reintenta correos pendientes sin generar cargos nuevos."""
+    for orden_id in payment_ledger.pending_receipts():
+        _entregar_comprobante(orden_id)
+
+
+@app.route("/api/checkout/estado/<orden_id>", methods=["GET"])
+@limiter.limit("30 per minute")
+@sesion_requerida
+def api_checkout_estado(orden_id):
+    record = payment_ledger.get(orden_id, str(g.usuario["id"]))
+    if not record:
+        return jsonify({"ok": False, "error": "La orden no existe"}), 404
+    result = record["response"]
+    if record["state"] == "approved":
+        return jsonify(_entregar_comprobante(orden_id)), 200
+    if record["state"] != "pending" or not result or not result.get("orden_proveedor"):
+        return jsonify(result or {"ok": False, "estado": "procesando"}), record["status"] or 202
+    try:
+        response = requests.get(f"https://api.mercadopago.com/v1/orders/{result['orden_proveedor']}",
+            headers={"Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}"}, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError):
+        return jsonify(result), 202
+    if not isinstance(data, dict) or str(data.get("id")) != result["orden_proveedor"]:
+        return jsonify(result), 202
+    return _procesar_resultado_mercado_pago(orden_id, data)
+
+
+@app.route("/api/pagos/mercadopago/webhook", methods=["POST"])
+@csrf.exempt
+@limiter.limit("60 per minute")
+def api_mercado_pago_webhook():
+    if not MERCADO_PAGO_WEBHOOK_SECRET or not MERCADO_PAGO_ACCESS_TOKEN:
+        return jsonify({"ok": False}), 503
+    payment_id = request.args.get("data.id", "")
+    request_id = request.headers.get("x-request-id", "")
+    signature = dict(part.strip().split("=", 1) for part in request.headers.get("x-signature", "").split(",") if "=" in part)
+    timestamp, supplied = signature.get("ts", ""), signature.get("v1", "")
+    if not ORDER_ID.fullmatch(payment_id) or not request_id or not timestamp.isdigit() or not supplied:
+        return jsonify({"ok": False}), 401
+    manifest = f"id:{payment_id};request-id:{request_id};ts:{timestamp};"
+    expected = hmac.new(MERCADO_PAGO_WEBHOOK_SECRET.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, supplied):
+        return jsonify({"ok": False}), 401
+    try:
+        response = requests.get(f"https://api.mercadopago.com/v1/orders/{payment_id}",
+            headers={"Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}"}, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError):
+        return jsonify({"ok": False}), 502
+    if not isinstance(data, dict) or str(data.get("id")) != payment_id:
+        return jsonify({"ok": False}), 502
+    reference = data.get("external_reference")
+    if not isinstance(reference, str) or not payment_ledger.get(reference):
+        return jsonify({"ok": True})
+    result, status_code = _procesar_resultado_mercado_pago(reference, data)
+    return jsonify({"ok": status_code < 500}), 200 if status_code < 500 else 502
 
 
 # ---------------------------------------------------------------------------
@@ -611,11 +978,17 @@ def api_auth_registro():
 
     if not email or "@" not in email:
         return jsonify({"ok": False, "error": "Ingresa un correo válido"}), 400
-    if len(password) < 6:
-        return jsonify({"ok": False, "error": "La contraseña debe tener al menos 6 caracteres"}), 400
+    if _acceso_bloqueado({"email": email}):
+        return _respuesta_acceso_bloqueado()
+    contrasena_valida, mensaje_contrasena = validar_contrasena(password)
+    if not contrasena_valida:
+        return jsonify({"ok": False, "error": mensaje_contrasena}), 400
 
     try:
-        datos = auth_registrar(email, password)
+        # Devolver al mismo FarmaPulse donde se inició el registro. En desarrollo
+        # usa el host local actual; en producción APP_BASE_URL fija el dominio.
+        base_url = os.getenv("APP_BASE_URL", "").strip().rstrip("/") or request.host_url.rstrip("/")
+        datos = auth_registrar(email, password, f"{base_url}/comparador")
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except requests.RequestException:
@@ -644,6 +1017,8 @@ def api_auth_login():
 
     if not email or not password:
         return jsonify({"ok": False, "error": "Ingresa correo y contraseña"}), 400
+    if _acceso_bloqueado({"email": email}):
+        return _respuesta_acceso_bloqueado()
 
     try:
         datos = auth_iniciar_sesion(email, password)
@@ -652,6 +1027,8 @@ def api_auth_login():
     except requests.RequestException:
         return jsonify({"ok": False, "error": "No se pudo contactar el servicio de autenticación"}), 502
 
+    if _acceso_bloqueado(datos.get("user") or {"email": email}):
+        return _respuesta_acceso_bloqueado()
     return jsonify({
         "ok": True,
         "usuario": datos.get("user"),
@@ -670,6 +1047,56 @@ def api_auth_logout():
             auth_cerrar_sesion(token)
         except requests.RequestException:
             pass
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/eliminar", methods=["POST"])
+@csrf.exempt
+@limiter.limit("3 per hour")
+@sesion_requerida
+def api_auth_eliminar():
+    if not SUPABASE_ADMIN_KEY:
+        return jsonify({
+            "ok": False,
+            "error": "La eliminación de cuentas no está configurada en el servidor",
+        }), 503
+
+    body = request.get_json(silent=True) or {}
+    password = body.get("password") if isinstance(body, dict) else None
+    email = (g.usuario.get("email") or "").strip().lower()
+    if not isinstance(password, str) or not password or not email:
+        return jsonify({"ok": False, "error": "Confirma tu contraseña para continuar"}), 400
+
+    try:
+        sesion_confirmada = auth_iniciar_sesion(email, password)
+    except ValueError:
+        return jsonify({"ok": False, "error": "La contraseña no es correcta"}), 401
+    except requests.RequestException:
+        return jsonify({"ok": False, "error": "No se pudo verificar tu contraseña"}), 502
+
+    usuario_confirmado = sesion_confirmada.get("user") or {}
+    usuario_id = g.usuario.get("id")
+    if not usuario_id or usuario_confirmado.get("id") != usuario_id:
+        return jsonify({"ok": False, "error": "No se pudo verificar la cuenta actual"}), 401
+
+    try:
+        respuesta = requests.delete(
+            f"{SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{usuario_id}",
+            headers={
+                "apikey": SUPABASE_ADMIN_KEY,
+                "Authorization": f"Bearer {SUPABASE_ADMIN_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=AUTH_TIMEOUT,
+        )
+    except requests.RequestException:
+        return jsonify({"ok": False, "error": "No se pudo completar la eliminación de la cuenta"}), 502
+
+    if respuesta.status_code not in (200, 204):
+        app.logger.warning("Supabase rechazó la eliminación de una cuenta (HTTP %s)", respuesta.status_code)
+        return jsonify({"ok": False, "error": "No se pudo eliminar la cuenta. Inténtalo nuevamente"}), 502
+
+    _MEMORIA_RECETAS[:] = [r for r in _MEMORIA_RECETAS if r.get("usuario_id") != usuario_id]
     return jsonify({"ok": True})
 
 
