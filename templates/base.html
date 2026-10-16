@@ -35,19 +35,14 @@
     <div class="flex gap-4 text-lg">
       <i class="fa-brands fa-facebook hover:text-fpGreen cursor-pointer"></i>
       <i class="fa-brands fa-instagram hover:text-fpGreen cursor-pointer"></i>
-      <i class="fa-brands fa-whatsapp hover:text-fpGreen cursor-pointer"></i>
     </div>
   </div>
 </footer>
 
 {% include "_auth_modales.html" %}
 
-<!-- Botón flotante de WhatsApp (se arma en JS con /api/config) -->
-<div id="botonWhatsapp"></div>
-
 {% block extra_scripts %}{% endblock %}
 <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
-<script src="{{ url_for('static', filename='js/whatsapp.js') }}"></script>
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

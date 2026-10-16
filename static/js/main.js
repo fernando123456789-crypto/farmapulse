@@ -2,7 +2,7 @@
    FarmaPulse - main.js
    Lógica de filtros en cascada, consumo de /api/buscar,
    renderizado dinámico de la tabla comparativa y manejo
-   del carrito de compra + checkout por WhatsApp.
+   del carrito de compra + checkout con Culqi.
    ========================================================= */
 
 (function () {
@@ -37,18 +37,22 @@
   const checkoutSubtotal = document.getElementById("checkoutSubtotal");
   const checkoutDelivery = document.getElementById("checkoutDelivery");
   const checkoutTotal = document.getElementById("checkoutTotal");
-  const checkoutZona = document.getElementById("checkoutZona");
-  const checkoutTiempo = document.getElementById("checkoutTiempo");
-  const checkoutCostoEnvio = document.getElementById("checkoutCostoEnvio");
-  const btnEnviarWhatsappPedido = document.getElementById("btnEnviarWhatsappPedido");
-  const btnCopiarPedido = document.getElementById("btnCopiarPedido");
+  const checkoutNombre = document.getElementById("checkoutNombre");
+  const checkoutDni = document.getElementById("checkoutDni");
+  const checkoutTelefono = document.getElementById("checkoutTelefono");
+  const checkoutDistrito = document.getElementById("checkoutDistrito");
+  const checkoutDireccion = document.getElementById("checkoutDireccion");
+  const checkoutEmail = document.getElementById("checkoutEmail");
+  const checkoutError = document.getElementById("checkoutError");
+  const btnPagarCulqi = document.getElementById("btnPagarCulqi");
 
   const CLAVE_CARRITO = "farmapulse_carrito";
 
-  // Config del servicio (número de WhatsApp, zona/tiempo/costo de delivery).
+  // Configuración del servicio y pasarela.
   // Se pide una sola vez a /api/config para no hardcodear nada en el JS.
   let configServicio = {
-    whatsapp_numero: "51963119803",
+    culqi_public_key: "",
+    pasarela_configurada: false,
     zona_delivery: ["San Borja", "San Luis", "La Victoria"],
     tiempo_delivery_minutos: 35,
     costo_delivery: 5,
@@ -508,30 +512,14 @@
   // -------------------------------------------------------
   // Checkout: abrir modal con el resumen del carrito
   // -------------------------------------------------------
-  function construirMensajeWhatsapp() {
-    const lineas = carrito.map((item, i) => {
-      const precio = item.precio_empaque != null ? item.precio_empaque : item.precio_unitario;
-      return `${i + 1}. ${item.medicamento} (${item.presentacion || "presentación única"}) - ${item.farmacia} - ${formatearSoles(precio)}`;
-    });
-
-    const total = totalCarrito() + Number(configServicio.costo_delivery || 0);
-
-    return [
-      "Hola FarmaPulse 👋, quiero hacer este pedido:",
-      "",
-      ...lineas,
-      "",
-      `Subtotal: ${formatearSoles(totalCarrito())}`,
-      `Delivery: ${formatearSoles(configServicio.costo_delivery)}`,
-      `Total: ${formatearSoles(total)}`,
-      "",
-      "📍 Mi ubicación: (la comparto en este chat)",
-      "🧾 Adjunto la captura del pago del QR a continuación.",
-    ].join("\n");
-  }
-
   function abrirCheckout() {
     if (carrito.length === 0) return;
+    if (!window.FarmaPulseAuth?.estaAutenticado()) {
+      document.getElementById("btnAbrirLogin")?.click();
+      return;
+    }
+    checkoutError.classList.add("hidden");
+    checkoutEmail.textContent = `Comprobante para: ${window.FarmaPulseAuth.obtenerCorreoActivo() || "tu correo de cuenta"}`;
 
     checkoutLista.innerHTML = carrito
       .map((item) => {
@@ -552,13 +540,6 @@
     checkoutSubtotal.textContent = formatearSoles(subtotal);
     checkoutDelivery.textContent = formatearSoles(costoEnvio);
     checkoutTotal.textContent = formatearSoles(subtotal + costoEnvio);
-    checkoutZona.textContent = (configServicio.zona_delivery || []).join(", ");
-    checkoutTiempo.textContent = `${configServicio.tiempo_delivery_minutos} minutos`;
-    checkoutCostoEnvio.textContent = formatearSoles(costoEnvio);
-
-    const mensaje = construirMensajeWhatsapp();
-    btnEnviarWhatsappPedido.href = `https://wa.me/${configServicio.whatsapp_numero}?text=${encodeURIComponent(mensaje)}`;
-
     modalCheckout.classList.remove("hidden");
   }
 
@@ -571,21 +552,102 @@
     el.addEventListener("click", cerrarCheckout)
   );
 
-  btnCopiarPedido.addEventListener("click", async () => {
-    const mensaje = construirMensajeWhatsapp();
-    const textoOriginal = btnCopiarPedido.innerHTML;
-    try {
-      await navigator.clipboard.writeText(mensaje);
-      btnCopiarPedido.innerHTML = '<i class="fa-solid fa-check"></i> ¡Copiado!';
-    } catch {
-      btnCopiarPedido.innerHTML = '<i class="fa-solid fa-xmark"></i> No se pudo copiar';
-    } finally {
-      setTimeout(() => { btnCopiarPedido.innerHTML = textoOriginal; }, 1800);
+  btnPagarCulqi.addEventListener("click", async () => {
+    checkoutError.classList.add("hidden");
+    checkoutError.classList.remove("border-green-200", "bg-green-50", "text-green-700");
+    checkoutError.classList.add("border-red-200", "bg-red-50", "text-red-700");
+    if (![checkoutNombre, checkoutDni, checkoutTelefono, checkoutDistrito, checkoutDireccion].every((campo) => campo.reportValidity())) return;
+    if (!configServicio.pasarela_configurada || !configServicio.culqi_public_key) {
+      checkoutError.textContent = "La pasarela todavía no está configurada. Contacta a soporte.";
+      checkoutError.classList.remove("hidden");
+      return;
     }
+    if (carrito.some((item) => !item.cotizacion)) {
+      checkoutError.textContent = "Actualiza los precios del carrito antes de pagar.";
+      checkoutError.classList.remove("hidden");
+      return;
+    }
+    const correo = window.FarmaPulseAuth.obtenerCorreoActivo();
+    const importe = Math.round((totalCarrito() + Number(configServicio.costo_delivery || 0)) * 100);
+    if (!window.CulqiCheckout) {
+      checkoutError.textContent = "No se pudo cargar la pasarela de pago. Inténtalo nuevamente.";
+      checkoutError.classList.remove("hidden");
+      return;
+    }
+    btnPagarCulqi.disabled = true;
+    btnPagarCulqi.textContent = "Preparando pago...";
+    let orden;
+    try {
+      const respuestaOrden = await fetch("/api/checkout/orden", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
+        body: JSON.stringify({
+          nombre: checkoutNombre.value.trim(), dni: checkoutDni.value.trim(),
+          telefono: checkoutTelefono.value.trim(), distrito: checkoutDistrito.value,
+          direccion: checkoutDireccion.value.trim(), productos: carrito,
+        }),
+      });
+      orden = await respuestaOrden.json();
+      if (!orden.ok) throw new Error(orden.error || "No se pudo preparar el pago.");
+    } catch (error) {
+      checkoutError.textContent = error.message;
+      checkoutError.classList.remove("hidden");
+      btnPagarCulqi.disabled = false;
+      btnPagarCulqi.innerHTML = '<i class="fa-solid fa-lock"></i> Pagar con tarjeta o Yape';
+      return;
+    }
+
+    const checkout = new window.CulqiCheckout(configServicio.culqi_public_key, {
+      settings: { title: "FarmaPulse", currency: "PEN", amount: orden.amount, order: orden.orden_id },
+      client: { email: correo },
+      options: { lang: "es", installments: true, modal: true, paymentMethods: { tarjeta: true, yape: true } },
+      appearance: { theme: "default" },
+    });
+    checkout.culqi = async function () {
+      if (!checkout.token) {
+        checkoutError.textContent = checkout.error?.user_message || "No se pudo validar el medio de pago.";
+        checkoutError.classList.remove("hidden");
+        return;
+      }
+      btnPagarCulqi.disabled = true;
+      btnPagarCulqi.textContent = "Confirmando pago...";
+      try {
+        const respuesta = await fetch("/api/checkout/pagar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
+          body: JSON.stringify({
+            token: checkout.token.id, orden_firma: orden.orden_firma,
+            installments: checkout.token.installments || "",
+            nombre: checkoutNombre.value.trim(), dni: checkoutDni.value.trim(),
+            telefono: checkoutTelefono.value.trim(), distrito: checkoutDistrito.value,
+            direccion: checkoutDireccion.value.trim(), productos: carrito,
+          }),
+        });
+        const data = await respuesta.json();
+        if (!data.ok) throw new Error(data.error || "No se pudo completar el pago.");
+        localStorage.removeItem(CLAVE_CARRITO);
+        carrito = [];
+        renderizarCarrito();
+        checkoutError.textContent = data.comprobante_enviado
+          ? `¡Compra realizada con éxito! Enviamos el comprobante a ${correo}.`
+          : `${data.mensaje} Código de operación: ${data.cargo_id}.`;
+        checkoutError.classList.remove("hidden", "border-red-200", "bg-red-50", "text-red-700");
+        checkoutError.classList.add("border-green-200", "bg-green-50", "text-green-700");
+      } catch (error) {
+        checkoutError.textContent = error.message;
+        checkoutError.classList.remove("hidden");
+      } finally {
+        btnPagarCulqi.disabled = false;
+        btnPagarCulqi.innerHTML = '<i class="fa-solid fa-lock"></i> Pagar con tarjeta o Yape';
+      }
+    };
+    checkout.open();
+    btnPagarCulqi.disabled = false;
+    btnPagarCulqi.innerHTML = '<i class="fa-solid fa-lock"></i> Pagar con tarjeta o Yape';
   });
 
   // -------------------------------------------------------
-  // Cargar configuración del servicio (WhatsApp + zona/tiempo/costo)
+  // Cargar la configuración de pago y delivery.
   // -------------------------------------------------------
   async function cargarConfigServicio() {
     try {
@@ -593,7 +655,8 @@
       const data = await respuesta.json();
       if (data.ok) {
         configServicio = {
-          whatsapp_numero: data.whatsapp_numero || configServicio.whatsapp_numero,
+          culqi_public_key: data.culqi_public_key || "",
+          pasarela_configurada: data.pasarela_configurada === true,
           zona_delivery: data.zona_delivery || configServicio.zona_delivery,
           tiempo_delivery_minutos: data.tiempo_delivery_minutos || configServicio.tiempo_delivery_minutos,
           costo_delivery: data.costo_delivery != null ? data.costo_delivery : configServicio.costo_delivery,
