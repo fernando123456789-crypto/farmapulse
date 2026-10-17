@@ -28,7 +28,7 @@ class Element {
   reportValidity() { return true; }
 }
 
-async function run() {
+async function run({ configured = true, sdkLoaded = true } = {}) {
   const elements = new Map();
   const get = (id) => {
     if (!elements.has(id)) elements.set(id, new Element());
@@ -70,6 +70,7 @@ async function run() {
     requestAnimationFrame(callback) { callback(); }, setTimeout() {},
   };
   const source = fs.readFileSync("static/js/main.js", "utf8").replace(/\}\)\(\);\s*$/, "window.testHelpers = { botonCarritoHtml, itemDesdeBoton }; })();");
+  if (!sdkLoaded) delete root.MercadoPago;
   vm.runInNewContext(source, {
     window: root,
     document: { getElementById: get, createElement: () => new Element(), querySelectorAll: () => [], addEventListener() {} },
@@ -78,7 +79,7 @@ async function run() {
     fetch: async (url, options) => {
       const body = options?.body ? JSON.parse(options.body) : null;
       calls.push({ url, body });
-      if (url === "/api/config") return response({ ok: true, pasarela_configurada: true, mercado_pago_public_key: "test-public", costo_delivery: 5 });
+      if (url === "/api/config") return response({ ok: true, pasarela_configurada: configured, mercado_pago_public_key: configured ? "test-public" : "", costo_delivery: 5 });
       if (url === "/static/data/area_reparto.geojson") return response(JSON.parse(fs.readFileSync("static/data/area_reparto.geojson", "utf8")));
       if (url === "/api/checkout/cotizar") return response({ ok: true, productos: [{ ...oldItem, precio_empaque: 12.5, cotizacion: "signed-price" }] });
       if (url === "/api/checkout/orden") {
@@ -99,6 +100,16 @@ async function run() {
   await get("btnComprar").emit("click");
   assert.equal(tileOptions.referrerPolicy, "strict-origin", "El mapa identifica únicamente el origen aunque la página use no-referrer");
   assert.match(tileOptions.attribution, /OpenStreetMap/);
+  if (!configured || !sdkLoaded) {
+    assert.equal(mountedAmount, undefined, "No muestro una tarjeta que no se puede procesar");
+    assert.equal(get("btnPagarMercadoPago").textContent, "", "No queda un mensaje de preparación atascado");
+    assert.equal(get("btnPagarMercadoPago").classList.contains("hidden"), true);
+    assert.equal(get("mercadoPagoTarjeta").classList.contains("hidden"), true);
+    assert.equal(get("checkoutError").classList.contains("hidden"), false);
+    assert.doesNotMatch(get("checkoutError").textContent, /configurado|soporte|credenciales|cuenta de Mercado Pago/i);
+    assert.equal(calls.some(({ url }) => url === "/api/checkout/pagar" || url === "/api/checkout/orden"), false);
+    return;
+  }
   assert.equal(mountedAmount, 17.5);
   assert.equal(get("checkoutTotal").textContent, "S/ 17.50");
   assert.equal(get("btnPagarMercadoPago").classList.contains("hidden"), true);
@@ -116,4 +127,9 @@ async function run() {
   console.log("OK: mapa con origen limitado, carrito antiguo, cotización automática, tarjeta y confirmación del comprobante.");
 }
 
-run().catch((error) => { console.error(error); process.exitCode = 1; });
+(async () => {
+  await run();
+  await run({ configured: false });
+  await run({ sdkLoaded: false });
+  console.log("OK: fallos de disponibilidad y SDK sin mensajes técnicos ni preparación atascada.");
+})().catch((error) => { console.error(error); process.exitCode = 1; });

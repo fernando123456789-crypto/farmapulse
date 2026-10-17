@@ -873,6 +873,15 @@
     el.addEventListener("click", cerrarCheckout)
   );
 
+  function mostrarFalloPreparacionTarjeta(mensaje) {
+    checkoutError.textContent = mensaje;
+    checkoutError.classList.remove("hidden");
+    tarjetaMercadoPago.classList.add("hidden");
+    btnPagarMercadoPago.textContent = "";
+    btnPagarMercadoPago.classList.add("hidden");
+    btnPagarMercadoPago.disabled = true;
+  }
+
   async function prepararTarjetaPago() {
     if (cobroEnCurso || pagoSinConfirmar || carrito.length === 0) return;
     checkoutError.classList.add("hidden");
@@ -881,13 +890,11 @@
     await cargaConfigServicio;
     if (cobroEnCurso || modalCheckout.classList.contains("hidden")) return;
     if (!configServicio.pasarela_configurada || !configServicio.mercado_pago_public_key) {
-      checkoutError.textContent = "Mercado Pago todavía no está configurado. Contacta a soporte.";
-      checkoutError.classList.remove("hidden");
+      mostrarFalloPreparacionTarjeta("El pago con tarjeta no está disponible en este momento. Intenta nuevamente más tarde.");
       return;
     }
     if (!window.MercadoPago || !window.FarmaPulseMercadoPago) {
-      checkoutError.textContent = "No se pudo cargar Mercado Pago. Recarga la página.";
-      checkoutError.classList.remove("hidden");
+      mostrarFalloPreparacionTarjeta("No se pudieron cargar los campos de tarjeta. Recarga la página e inténtalo nuevamente.");
       return;
     }
     cobroEnCurso = true;
@@ -989,8 +996,7 @@
       });
       btnPagarMercadoPago.classList.add("hidden");
     } catch (error) {
-      checkoutError.textContent = error.message;
-      checkoutError.classList.remove("hidden");
+      mostrarFalloPreparacionTarjeta(error.message || "No se pudieron cargar los campos de tarjeta. Intenta nuevamente.");
     } finally {
       cobroEnCurso = false;
       btnPagarMercadoPago.disabled = pagoSinConfirmar;
