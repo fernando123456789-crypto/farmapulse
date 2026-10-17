@@ -314,6 +314,8 @@
       mapaEntrega.attributionControl.setPrefix(false);
       window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
+        // OSM exige Referer: comparto solo el origen HTTPS, nunca la ruta ni parámetros.
+        referrerPolicy: "strict-origin",
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       }).addTo(mapaEntrega);
       mapaEntrega.on("click", (evento) => elegirPuntoEntrega(evento.latlng));

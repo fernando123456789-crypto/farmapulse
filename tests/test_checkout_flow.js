@@ -37,7 +37,14 @@ async function run() {
   const oldItem = { medicamento: "Paracetamol 500 mg", farmacia: "Inkafarma", presentacion: "Caja de 10", precio_empaque: 9 };
   const storage = new Map([["farmapulse_carrito", JSON.stringify([oldItem])]]);
   const calls = [];
-  let submitCard, mountedAmount;
+  let submitCard, mountedAmount, tileOptions;
+  const bounds = { pad() { return this; } };
+  const map = {
+    setView() { return this; }, attributionControl: { setPrefix() {} },
+    on() {}, invalidateSize() {}, setMaxBounds() {}, setMinZoom() {}, fitBounds() {},
+    getBoundsZoom() { return 14; },
+  };
+  const layer = () => ({ addTo() { return this; }, getBounds() { return bounds; } });
   const response = (data) => ({ ok: true, json: async () => data });
   const root = {
     FarmaPulseAuth: { estaAutenticado: () => true, headersAuth: () => ({}), obtenerCorreoActivo: () => "buyer@example.invalid" },
@@ -51,7 +58,16 @@ async function run() {
       }
       async unmount() {}
     },
-    requestAnimationFrame() {}, setTimeout() {},
+    L: {
+      map: () => map,
+      tileLayer(url, options) {
+        assert.equal(url, "https://tile.openstreetmap.org/{z}/{x}/{y}.png");
+        tileOptions = options;
+        return layer();
+      },
+      geoJSON: layer, polygon: layer,
+    },
+    requestAnimationFrame(callback) { callback(); }, setTimeout() {},
   };
   const source = fs.readFileSync("static/js/main.js", "utf8").replace(/\}\)\(\);\s*$/, "window.testHelpers = { botonCarritoHtml, itemDesdeBoton }; })();");
   vm.runInNewContext(source, {
@@ -63,6 +79,7 @@ async function run() {
       const body = options?.body ? JSON.parse(options.body) : null;
       calls.push({ url, body });
       if (url === "/api/config") return response({ ok: true, pasarela_configurada: true, mercado_pago_public_key: "test-public", costo_delivery: 5 });
+      if (url === "/static/data/area_reparto.geojson") return response(JSON.parse(fs.readFileSync("static/data/area_reparto.geojson", "utf8")));
       if (url === "/api/checkout/cotizar") return response({ ok: true, productos: [{ ...oldItem, precio_empaque: 12.5, cotizacion: "signed-price" }] });
       if (url === "/api/checkout/orden") {
         assert.equal(body.productos[0].cotizacion, "signed-price");
@@ -80,6 +97,8 @@ async function run() {
   assert.equal(helpers.itemDesdeBoton({ dataset: { cotizacion: "signed-price" } }).cotizacion, "signed-price");
   assert.doesNotMatch(helpers.botonCarritoHtml({ ...oldItem, comprable: false }), /<button/);
   await get("btnComprar").emit("click");
+  assert.equal(tileOptions.referrerPolicy, "strict-origin", "El mapa identifica únicamente el origen aunque la página use no-referrer");
+  assert.match(tileOptions.attribution, /OpenStreetMap/);
   assert.equal(mountedAmount, 17.5);
   assert.equal(get("checkoutTotal").textContent, "S/ 17.50");
   assert.equal(get("btnPagarMercadoPago").classList.contains("hidden"), true);
@@ -94,7 +113,7 @@ async function run() {
   assert.equal(payment.body.productos[0].cotizacion, "signed-price");
   assert.equal(get("checkoutError").textContent, "Compra exitosa, revisa tu correo. Estamos en camino.");
   assert.equal(storage.has("farmapulse_carrito"), false);
-  console.log("OK: carrito antiguo, cotización automática, tarjeta y confirmación del comprobante.");
+  console.log("OK: mapa con origen limitado, carrito antiguo, cotización automática, tarjeta y confirmación del comprobante.");
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; });
