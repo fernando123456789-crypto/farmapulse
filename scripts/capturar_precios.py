@@ -40,14 +40,14 @@ from scrapers.registry import SCRAPERS_ACTIVOS, buscar_en_farmacias  # noqa: E40
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 # Pausa entre productos para no saturar las farmacias con peticiones
 # seguidas (además del rate-limit propio que ya tiene cada scraper).
 PAUSA_ENTRE_PRODUCTOS_SEGUNDOS = 3
 
 if not SUPABASE_URL or not SUPABASE_KEY or "tu-proyecto" in SUPABASE_URL:
-    print("[capturar_precios] ERROR: SUPABASE_URL / SUPABASE_KEY no configurados. "
+    print("[capturar_precios] ERROR: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY no configurados. "
           "Este script necesita Supabase real, no tiene modo degradado.")
     sys.exit(1)
 

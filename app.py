@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from functools import wraps, lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 from dotenv import load_dotenv
@@ -48,7 +49,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 from flask_wtf.csrf import CSRFProtect
-from security import validar_contrasena, validar_email
+from security import validar_contrasena, validar_email, sanitizar_termino_busqueda
 from identity_security import IdentitySecurity
 from delivery_location import district_for_point
 from payment_ledger import PaymentLedger
@@ -73,6 +74,22 @@ if not SECRET_KEY:
         "Ejemplo: SECRET_KEY=<clave-segura-de-32-caracteres>"
     )
 app.config["SECRET_KEY"] = SECRET_KEY
+app.config.update(
+    MAX_CONTENT_LENGTH=128 * 1024,
+    MAX_FORM_MEMORY_SIZE=128 * 1024,
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+_base_configurada = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+_host_configurado = urlsplit(_base_configurada).hostname if _base_configurada else None
+app.config["TRUSTED_HOSTS"] = ["localhost", "127.0.0.1", "[::1]"] + ([_host_configurado] if _host_configurado else [])
+_produccion = os.getenv("APP_ENV") == "production"
+if _produccion and (len(SECRET_KEY) < 32 or not _base_configurada.startswith("https://")):
+    raise ValueError("Producción requiere SECRET_KEY de al menos 32 caracteres y APP_BASE_URL HTTPS")
+_rate_storage = os.getenv("RATELIMIT_STORAGE_URI", "memory://")
+if _produccion and not _rate_storage.startswith(("redis://", "rediss://")):
+    raise ValueError("Producción requiere RATELIMIT_STORAGE_URI con Redis compartido")
 identity_security = IdentitySecurity(
     os.getenv("IDENTITY_SECURITY_DB") or Path(app.instance_path) / "identity_security.sqlite3",
     os.getenv("IDENTITY_SECURITY_KEY") or SECRET_KEY,
@@ -110,7 +127,8 @@ def manejar_error_interno_api(error):
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri=_rate_storage, headers_enabled=True, strategy="moving-window",
 )
 
 # =========================================================================
@@ -118,12 +136,18 @@ limiter = Limiter(
 # =========================================================================
 Talisman(
     app,
-    force_https=False,  # En desarrollo. En producción cambiar a True
+    force_https=_produccion,
+    frame_options="DENY",
+    referrer_policy="no-referrer",
     strict_transport_security=True,
     strict_transport_security_max_age=31536000,
     content_security_policy={
         "default-src": "'self'",
-        "script-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "kit.fontawesome.com", "https://*.mercadopago.com", "https://*.mlstatic.com"],
+        "base-uri": "'self'",
+        "object-src": "'none'",
+        "frame-ancestors": "'none'",
+        "form-action": "'self'",
+        "script-src": ["'self'", "https://*.mercadopago.com", "https://*.mlstatic.com"],
         "connect-src": ["'self'", "https://*.mercadopago.com", "https://*.mercadopago.com.pe", "https://*.mlstatic.com"],
         "frame-src": ["'self'", "https://*.mercadopago.com", "https://*.mercadopago.com.pe", "https://*.mercadolibre.com", "https://*.mlstatic.com"],
         "style-src": ["'self'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
@@ -131,6 +155,25 @@ Talisman(
         "font-src": ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
     }
 )
+
+
+@app.before_request
+def proteger_solicitudes_api():
+    # No uso cookies para autorizar la API: exijo JSON y Bearer en las rutas privadas.
+    # Rechazo además formularios y peticiones iniciadas por sitios ajenos.
+    if request.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if request.endpoint == "api_mercado_pago_webhook":
+            return None  # El webhook usa su propia firma, nunca la sesión del navegador.
+        origin = request.headers.get("Origin")
+        allowed = {request.host_url.rstrip("/")}
+        if _base_configurada:
+            allowed.add(_base_configurada)
+        if origin and origin not in allowed:
+            return jsonify({"ok": False, "error": "Origen de la solicitud no permitido"}), 403
+        if request.headers.get("Sec-Fetch-Site") == "cross-site":
+            return jsonify({"ok": False, "error": "Origen de la solicitud no permitido"}), 403
+        if not request.is_json and request.endpoint != "api_auth_logout":
+            return jsonify({"ok": False, "error": "Envía la solicitud como JSON"}), 415
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -171,35 +214,17 @@ def _comercio_de_pruebas(access_token):
 
 
 # ---------------------------------------------------------------------------
-# Cliente Supabase (con manejo de errores si las credenciales no son válidas
-# o si el paquete no puede inicializar la conexión — la app debe seguir
-# funcionando en modo "solo comparador" aunque Supabase falle).
+# Acceso a Supabase por petición, con el Bearer del usuario y RLS.
 # ---------------------------------------------------------------------------
-supabase_client = None
-try:
-    from supabase import create_client
-
-    if SUPABASE_URL and SUPABASE_KEY and "tu-proyecto" not in SUPABASE_URL:
-        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print("[FarmaPulse] Conexión a Supabase inicializada correctamente.")
-    else:
-        print("[FarmaPulse] Supabase no configurado (usando valores de ejemplo en .env). "
-              "Las rutas /api/receta funcionarán en modo degradado (memoria local).")
-except Exception as exc:  # pragma: no cover
-    print(f"[FarmaPulse] No se pudo inicializar Supabase: {exc}")
-    supabase_client = None
-
-# Almacenamiento en memoria como fallback si Supabase no está disponible
-# (permite probar la app end-to-end sin credenciales reales).
+# La memoria local solo se usa si no hay proyecto configurado, nunca para
+# ocultar errores de permisos o caídas de la base de datos real.
 _MEMORIA_RECETAS = []
 
 # ---------------------------------------------------------------------------
 # Autenticación (Supabase Auth) — correo + contraseña, "lo clásico"
 # ---------------------------------------------------------------------------
-# Se llama directo a la REST API de Supabase Auth (no al cliente Python
-# global de arriba) porque ese cliente se comparte entre TODAS las
-# peticiones del servidor Flask; guardar ahí la sesión de un usuario la
-# mezclaría con la de otro usuario concurrente. Con la REST API cada
+# Se llama directo a la REST API de Supabase Auth. Un cliente global que
+# guardara sesiones mezclaría las de usuarios concurrentes. Cada
 # petición lleva su propio token: es el patrón correcto para un backend
 # multiusuario.
 AUTH_TIMEOUT = 8
@@ -281,15 +306,18 @@ def auth_recuperar_contrasena(email: str, redirect_to: str) -> dict:
 
 
 def _limite_correo_auth():
-    if request.remote_addr in {"127.0.0.1", "::1"}:
-        try:
-            hasta = datetime.fromisoformat(os.getenv("AUTH_EMAIL_TEST_UNTIL", ""))
-            segundos = (hasta - datetime.now(timezone.utc)).total_seconds()
-            if 0 < segundos <= 3600:
-                return "10 per hour"
-        except (ValueError, TypeError):
-            pass
-    return "3 per hour"
+    return "5 per hour"
+
+
+def _clave_correo_auth():
+    body = request.get_json(silent=True)
+    email = body.get("email", "") if isinstance(body, dict) else ""
+    normalized = email.strip().lower() if isinstance(email, str) else ""
+    return hmac.new(SECRET_KEY.encode(), normalized.encode(), hashlib.sha256).hexdigest()
+
+
+_limite_correos_ip = limiter.shared_limit(_limite_correo_auth, scope="correos-auth")
+_limite_correos_cuenta = limiter.shared_limit(_limite_correo_auth, scope="correos-auth-cuenta", key_func=_clave_correo_auth)
 
 
 def auth_iniciar_sesion(email: str, password: str) -> dict:
@@ -347,6 +375,7 @@ def auth_actualizar_contrasena(access_token: str, password: str) -> dict:
 
 
 def auth_cerrar_sesion(access_token: str) -> None:
+    identity_security.revoke_token(access_token)
     requests.post(_auth_url("/logout"), headers=_auth_headers(access_token), timeout=AUTH_TIMEOUT)
 
 
@@ -354,7 +383,11 @@ def auth_obtener_usuario(access_token: str) -> dict:
     respuesta = requests.get(_auth_url("/user"), headers=_auth_headers(access_token), timeout=AUTH_TIMEOUT)
     if respuesta.status_code >= 400:
         raise ValueError("Sesión inválida o expirada")
-    return respuesta.json()
+    usuario = respuesta.json()
+    if (not isinstance(usuario, dict) or not usuario.get("id") or not usuario.get("email")
+            or not usuario.get("email_confirmed_at") or usuario.get("is_anonymous")):
+        raise ValueError("La cuenta no tiene un correo confirmado")
+    return usuario
 
 
 def consultar_dni_reniec(dni: str) -> dict:
@@ -428,10 +461,11 @@ def sesion_opcional(f):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer ") and _supabase_configurado():
             token = auth_header.removeprefix("Bearer ").strip()
-            try:
-                g.usuario = auth_obtener_usuario(token)
-            except Exception:
-                g.usuario = None
+            if token and len(token) <= 8192 and not identity_security.token_revoked(token):
+                try:
+                    g.usuario = auth_obtener_usuario(token)
+                except Exception:
+                    g.usuario = None
         if g.usuario and _acceso_bloqueado(g.usuario):
             return _respuesta_acceso_bloqueado()
         return f(*args, **kwargs)
@@ -448,6 +482,8 @@ def sesion_requerida(f):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer ") and _supabase_configurado():
             token = auth_header.removeprefix("Bearer ").strip()
+            if not token or len(token) > 8192 or identity_security.token_revoked(token):
+                return jsonify({"ok": False, "requiere_login": True, "error": "La sesión venció. Inicia sesión nuevamente."}), 401
             try:
                 g.usuario = auth_obtener_usuario(token)
             except Exception:
@@ -969,7 +1005,7 @@ def api_checkout_pagar():
     installments = body.get("installments")
     if (not isinstance(token, str) or not re.fullmatch(r"[a-fA-F0-9]{32}", token)
             or not isinstance(method, str) or not re.fullmatch(r"[a-zA-Z0-9_]{1,40}", method)
-            or payment_type not in {"credit_card", "debit_card"}
+            or not isinstance(payment_type, str) or payment_type not in {"credit_card", "debit_card"}
             or isinstance(installments, bool) or not re.fullmatch(r"\d{1,2}", str(installments))
             or not 1 <= int(installments) <= 48
             or (issuer not in (None, "") and not re.fullmatch(r"\d{1,20}", str(issuer)))):
@@ -1143,7 +1179,8 @@ def api_mercado_pago_webhook():
 # ---------------------------------------------------------------------------
 @app.route("/api/auth/registro", methods=["POST"])
 @csrf.exempt
-@limiter.limit("3 per hour")  # 🔒 Prevenir spam/fuerza bruta en registro
+@_limite_correos_ip
+@_limite_correos_cuenta
 def api_auth_registro():
     if not _supabase_configurado():
         return jsonify({"ok": False, "error": "Supabase no está configurado en el servidor"}), 503
@@ -1184,7 +1221,8 @@ def api_auth_registro():
 @app.route("/api/auth/reenviar-confirmacion", methods=["POST"])
 @csrf.exempt
 @limiter.limit("1 per minute")
-@limiter.limit(_limite_correo_auth)
+@_limite_correos_ip
+@_limite_correos_cuenta
 def api_auth_reenviar_confirmacion():
     if not _supabase_configurado():
         return jsonify({"ok": False, "error": "El servicio de autenticación no está disponible"}), 503
@@ -1207,7 +1245,8 @@ def api_auth_reenviar_confirmacion():
 @app.route("/api/auth/recuperar-contrasena", methods=["POST"])
 @csrf.exempt
 @limiter.limit("1 per minute")
-@limiter.limit(_limite_correo_auth)
+@_limite_correos_ip
+@_limite_correos_cuenta
 def api_auth_recuperar_contrasena():
     if not _supabase_configurado():
         return jsonify({"ok": False, "error": "El servicio de autenticación no está disponible"}), 503
@@ -1254,6 +1293,7 @@ def api_auth_nueva_contrasena():
 @app.route("/api/auth/login", methods=["POST"])
 @csrf.exempt
 @limiter.limit("5 per 15 minutes")  # 🔒 Prevenir fuerza bruta en login
+@limiter.limit("5 per 15 minutes", key_func=_clave_correo_auth)
 def api_auth_login():
     if not _supabase_configurado():
         return jsonify({"ok": False, "error": "Supabase no está configurado en el servidor"}), 503
@@ -1263,7 +1303,7 @@ def api_auth_login():
         return jsonify({"ok": False, "error": "Ingresa correo y contraseña"}), 400
     email = body["email"].strip().lower()
     password = body["password"]
-    if not validar_email(email)[0] or not password:
+    if not validar_email(email)[0] or not password or len(password) > 1024:
         return jsonify({"ok": False, "error": "Ingresa correo y contraseña"}), 400
     if _acceso_bloqueado({"email": email}):
         return _respuesta_acceso_bloqueado()
@@ -1375,11 +1415,23 @@ def api_buscar():
     else:
         payload = request.args
 
-    termino = (payload.get("producto") or payload.get("termino") or "").strip()
+    if not hasattr(payload, "get"):
+        return jsonify({"ok": False, "error": "La solicitud no es válida"}), 400
+    termino = payload.get("producto") or payload.get("termino") or ""
+    if not isinstance(termino, str):
+        return jsonify({"ok": False, "error": "Ingresa un término de búsqueda válido"}), 400
+    valido, mensaje, termino = sanitizar_termino_busqueda(termino)
+    if not valido:
+        return jsonify({"ok": False, "error": mensaje}), 400
     departamento = payload.get("departamento") or ""
     provincia = payload.get("provincia") or ""
     distrito = payload.get("distrito") or ""
     farmacia = payload.get("farmacia") or ""
+    if any(not isinstance(valor, str) or len(valor) > 100 for valor in (departamento, provincia, distrito, farmacia)):
+        return jsonify({"ok": False, "error": "Los filtros no son válidos"}), 400
+    if ((departamento and departamento != "Lima") or (provincia and provincia != "Lima")
+            or (distrito and distrito not in ZONA_DELIVERY)):
+        return jsonify({"ok": False, "error": "Selecciona una ubicación de nuestra zona de reparto"}), 400
 
     resultados = buscar_en_farmacias(termino, farmacia_filtro=farmacia or None)
     for r in resultados:
@@ -1421,6 +1473,8 @@ def api_receta_guardar():
     Sin Supabase, va a memoria local.
     """
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "La receta no es válida"}), 400
 
     requeridos = ["medicamento", "farmacia", "precio_unitario"]
     faltantes = [campo for campo in requeridos if campo not in body]
@@ -1429,6 +1483,26 @@ def api_receta_guardar():
             "ok": False,
             "error": f"Faltan campos requeridos: {', '.join(faltantes)}"
         }), 400
+
+    for campo in ("medicamento", "farmacia", "dci", "distrito", "presentacion"):
+        valor = body.get(campo, "")
+        if (not isinstance(valor, str) or len(valor) > 250
+                or any(ord(c) < 32 for c in valor)
+                or (campo in ("medicamento", "farmacia") and not valor.strip())):
+            return jsonify({"ok": False, "error": "Los datos de la receta no son válidos"}), 400
+    if body.get("tipo", "GENERICO") not in ("GENERICO", "MARCA"):
+        return jsonify({"ok": False, "error": "El tipo de medicamento no es válido"}), 400
+    try:
+        for campo in ("precio_unitario", "precio_empaque"):
+            valor = body.get(campo)
+            if campo == "precio_empaque" and valor is None:
+                continue
+            precio = Decimal(str(valor))
+            if isinstance(valor, bool) or not precio.is_finite() or not 0 < precio <= 7000:
+                raise ValueError
+            body[campo] = float(precio.quantize(Decimal("0.01")))
+    except (ValueError, TypeError, InvalidOperation):
+        return jsonify({"ok": False, "error": "El precio de la receta no es válido"}), 400
 
     usuario_id = g.usuario["id"]
 
@@ -1446,15 +1520,18 @@ def api_receta_guardar():
         "creado_en": datetime.now(timezone.utc).isoformat(),
     }
 
-    if supabase_client:
+    if _supabase_configurado():
         try:
-            resultado = (
-                supabase_client.table("listas_recetas").insert(registro).execute()
+            resultado = requests.post(
+                f"{SUPABASE_URL.rstrip('/')}/rest/v1/listas_recetas",
+                headers={**_auth_headers(request.headers["Authorization"].removeprefix("Bearer ").strip()),
+                         "Prefer": "return=representation"}, json=registro, timeout=AUTH_TIMEOUT,
             )
-            return jsonify({"ok": True, "fuente": "supabase", "data": resultado.data})
-        except Exception as exc:
-            print(f"[FarmaPulse] Error al guardar en Supabase: {exc}")
-            # Continúa hacia el fallback en memoria en vez de fallar la request.
+            resultado.raise_for_status()
+            return jsonify({"ok": True, "fuente": "supabase", "data": resultado.json()})
+        except (requests.RequestException, ValueError):
+            app.logger.warning("No se pudo guardar la receta con la sesión del usuario")
+            return jsonify({"ok": False, "error": "No se pudo guardar la receta. Intenta nuevamente."}), 502
 
     _MEMORIA_RECETAS.append(registro)
     return jsonify({"ok": True, "fuente": "memoria_local", "data": registro})
@@ -1466,18 +1543,19 @@ def api_receta_historial():
     """Historial de "Mi Receta": ahora requiere sesión iniciada."""
     usuario_id = g.usuario["id"]
 
-    if supabase_client:
+    if _supabase_configurado():
         try:
-            resultado = (
-                supabase_client.table("listas_recetas")
-                .select("*")
-                .eq("usuario_id", usuario_id)
-                .order("creado_en", desc=True)
-                .execute()
+            resultado = requests.get(
+                f"{SUPABASE_URL.rstrip('/')}/rest/v1/listas_recetas",
+                headers=_auth_headers(request.headers["Authorization"].removeprefix("Bearer ").strip()),
+                params={"select": "*", "usuario_id": f"eq.{usuario_id}", "order": "creado_en.desc", "limit": "100"},
+                timeout=AUTH_TIMEOUT,
             )
-            return jsonify({"ok": True, "fuente": "supabase", "data": resultado.data})
-        except Exception as exc:
-            print(f"[FarmaPulse] Error al leer historial de Supabase: {exc}")
+            resultado.raise_for_status()
+            return jsonify({"ok": True, "fuente": "supabase", "data": resultado.json()})
+        except (requests.RequestException, ValueError):
+            app.logger.warning("No se pudo consultar el historial con la sesión del usuario")
+            return jsonify({"ok": False, "error": "No se pudo consultar el historial. Intenta nuevamente."}), 502
 
     historial_local = [
         r for r in _MEMORIA_RECETAS if r["usuario_id"] == usuario_id
@@ -1504,6 +1582,10 @@ def add_security_headers(response):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
     return response
     
 # ---------------------------------------------------------------------------

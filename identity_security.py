@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import sqlite3
+import time
 from contextlib import closing
 from pathlib import Path
 
@@ -22,6 +23,23 @@ class IdentitySecurity:
                     blocked INTEGER NOT NULL DEFAULT 0
                 )
             """)
+            connection.execute("""CREATE TABLE IF NOT EXISTS revoked_tokens (
+                token_hash TEXT PRIMARY KEY, expires REAL NOT NULL
+            )""")
+
+    def revoke_token(self, token):
+        key = self._keys({"sesion": token})[0]
+        with closing(self._connect()) as connection, connection:
+            now = time.time()
+            connection.execute("DELETE FROM revoked_tokens WHERE expires <= ?", (now,))
+            connection.execute("INSERT OR REPLACE INTO revoked_tokens VALUES (?, ?)", (key, now + 30 * 86400))
+
+    def token_revoked(self, token):
+        key = self._keys({"sesion": token})[0]
+        with closing(self._connect()) as connection:
+            return connection.execute(
+                "SELECT 1 FROM revoked_tokens WHERE token_hash = ? AND expires > ?", (key, time.time()),
+            ).fetchone() is not None
 
     def _connect(self):
         return sqlite3.connect(self.path, timeout=10)
@@ -35,11 +53,11 @@ class IdentitySecurity:
     def _status(self, connection, keys):
         if not keys:
             return {"blocked": False, "remaining": self.MAX_FAILURES}
-        placeholders = ",".join("?" for _ in keys)
-        failures, blocked = connection.execute(
-            f"SELECT COALESCE(MAX(failures), 0), COALESCE(MAX(blocked), 0) "
-            f"FROM identity_attempts WHERE identifier IN ({placeholders})", keys,
-        ).fetchone()
+        rows = [connection.execute(
+            "SELECT failures, blocked FROM identity_attempts WHERE identifier = ?", (key,),
+        ).fetchone() for key in keys]
+        failures = max((row[0] for row in rows if row), default=0)
+        blocked = any(row[1] for row in rows if row)
         return {"blocked": bool(blocked), "remaining": max(0, self.MAX_FAILURES - failures)}
 
     def status(self, identifiers):

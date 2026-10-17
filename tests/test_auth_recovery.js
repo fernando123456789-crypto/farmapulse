@@ -111,7 +111,9 @@ async function run() {
     const change = h.calls.find(({ url }) => url === "/api/auth/nueva-contrasena");
     assert.equal(change.options.headers.Authorization, "Bearer verified-recovery");
     assert.deepEqual(JSON.parse(change.options.body), { password: "ClaveNueva123!" });
-    assert.equal(JSON.parse(h.local.get("farmapulse_sesion")).usuario.id, user.id);
+    assert.equal(JSON.parse(h.tab.get("farmapulse_sesion")).usuario.id, user.id);
+    assert.equal(h.local.has("farmapulse_sesion"), false);
+    assert.equal(JSON.parse(h.tab.get("farmapulse_sesion")).refresh_token, undefined);
     assert.equal(h.tab.has("farmapulse_recuperacion"), false);
     assert.equal(h.get("modalNuevaContrasena").classList.contains("hidden"), true);
     assert.equal(form.querySelector('[name="password"]').value, "");
@@ -130,7 +132,7 @@ async function run() {
   }
   {
     const h = await setup({ fragment: "#access_token=signup-token&refresh_token=refresh&type=signup" });
-    assert.equal(JSON.parse(h.local.get("farmapulse_sesion")).access_token, "signup-token");
+    assert.equal(JSON.parse(h.tab.get("farmapulse_sesion")).access_token, "signup-token");
     assert.equal(h.get("modalNuevaContrasena").classList.contains("hidden"), true);
   }
   {

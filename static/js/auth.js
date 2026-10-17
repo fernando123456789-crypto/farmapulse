@@ -13,19 +13,26 @@
 
   function obtenerSesion() {
     try {
-      const cruda = localStorage.getItem(CLAVE_SESION);
-      return cruda ? JSON.parse(cruda) : null;
+      const cruda = sessionStorage.getItem(CLAVE_SESION) || localStorage.getItem(CLAVE_SESION);
+      const sesion = cruda ? JSON.parse(cruda) : null;
+      if (sesion?.access_token) {
+        guardarSesion(sesion);
+        localStorage.removeItem(CLAVE_SESION);
+      }
+      return sesion;
     } catch {
       return null;
     }
   }
 
   function guardarSesion(sesion) {
-    localStorage.setItem(CLAVE_SESION, JSON.stringify(sesion));
+    // No conservo el refresh token ni dejo sesiones permanentes en el navegador.
+    sessionStorage.setItem(CLAVE_SESION, JSON.stringify({ access_token: sesion.access_token, usuario: sesion.usuario }));
   }
 
   function borrarSesion() {
     localStorage.removeItem(CLAVE_SESION);
+    sessionStorage.removeItem(CLAVE_SESION);
   }
 
   function obtenerUsuarioAnonimo() {

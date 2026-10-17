@@ -7,14 +7,14 @@ from test_identity_security import CheckoutIdentityFixture
 
 
 class AuthRecoveryTests(CheckoutIdentityFixture, unittest.TestCase):
-    def test_temporary_email_limit_is_local_bounded_and_expires(self):
+    def test_email_limit_is_five_even_with_old_testing_override(self):
         now = datetime(2026, 10, 17, tzinfo=timezone.utc)
-        cases = (("", "127.0.0.1", "3 per hour"),
-                 ("invalid", "127.0.0.1", "3 per hour"),
-                 ((now + timedelta(minutes=30)).isoformat(), "127.0.0.1", "10 per hour"),
-                 ((now + timedelta(minutes=30)).isoformat(), "203.0.113.1", "3 per hour"),
-                 ((now - timedelta(seconds=1)).isoformat(), "127.0.0.1", "3 per hour"),
-                 ((now + timedelta(hours=2)).isoformat(), "127.0.0.1", "3 per hour"))
+        cases = (("", "127.0.0.1", "5 per hour"),
+                 ("invalid", "127.0.0.1", "5 per hour"),
+                 ((now + timedelta(minutes=30)).isoformat(), "127.0.0.1", "5 per hour"),
+                 ((now + timedelta(minutes=30)).isoformat(), "203.0.113.1", "5 per hour"),
+                 ((now - timedelta(seconds=1)).isoformat(), "127.0.0.1", "5 per hour"),
+                 ((now + timedelta(hours=2)).isoformat(), "127.0.0.1", "5 per hour"))
         with patch.object(self.module, "datetime", wraps=datetime) as clock:
             clock.now.return_value = now
             for until, ip, expected in cases:

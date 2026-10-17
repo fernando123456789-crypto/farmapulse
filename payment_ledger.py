@@ -1,12 +1,14 @@
 """Control persistente de envíos de cargos para evitar cobros duplicados."""
 
 import hashlib
+import base64
 import hmac
 import json
 import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
+from cryptography.fernet import Fernet
 
 
 class PaymentLedger:
@@ -14,6 +16,9 @@ class PaymentLedger:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.secret = secret.encode()
+        self.cipher = Fernet(base64.urlsafe_b64encode(hmac.new(
+            self.secret, b"farmapulse-payment-context-v1", hashlib.sha256,
+        ).digest()))
         with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("""CREATE TABLE IF NOT EXISTS payments (
                 order_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
@@ -26,6 +31,22 @@ class PaymentLedger:
                 db.execute("ALTER TABLE payments ADD COLUMN context TEXT")
             if "receipt_lease" not in {row[1] for row in db.execute("PRAGMA table_info(payments)")}:
                 db.execute("ALTER TABLE payments ADD COLUMN receipt_lease REAL")
+            # Conservo las compras anteriores y cifro sus datos personales al abrir la base.
+            db.execute("PRAGMA secure_delete = ON")
+            for order_id, context in db.execute("SELECT order_id, context FROM payments WHERE context IS NOT NULL").fetchall():
+                if not context.startswith("fernet:"):
+                    db.execute("UPDATE payments SET context = ? WHERE order_id = ?",
+                               (self._encrypt_context(order_id, json.loads(context)), order_id))
+
+    def _encrypt_context(self, order_id, context):
+        envelope = json.dumps({"order_id": order_id, "data": context}).encode()
+        return "fernet:" + self.cipher.encrypt(envelope).decode()
+
+    def _decrypt_context(self, order_id, value):
+        envelope = json.loads(self.cipher.decrypt(value.removeprefix("fernet:").encode()))
+        if envelope["order_id"] != order_id:
+            raise ValueError("El contexto no corresponde a la orden")
+        return envelope["data"]
 
     def _hash(self, value):
         return hmac.new(self.secret, value.encode(), hashlib.sha256).hexdigest()
@@ -35,13 +56,14 @@ class PaymentLedger:
         with closing(sqlite3.connect(self.path, timeout=10)) as db, db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
-                "SELECT order_id, token_hash, device_hash, state, response, status FROM payments "
+                "SELECT order_id, token_hash, device_hash, state, response, status, owner_hash FROM payments "
                 "WHERE order_id = ? OR token_hash = ?", (order_id, token_hash),
             ).fetchall()
             if existing:
-                if len(existing) != 1 or existing[0][:3] != (order_id, token_hash, device_hash):
+                if (len(existing) != 1 or existing[0][:3] != (order_id, token_hash, device_hash)
+                        or existing[0][6] != self._hash(owner)):
                     return {"ok": False, "estado": "conflicto", "error": "La orden o el token ya se utilizaron en otro intento de pago"}, 409
-                _, _, _, state, response, status = existing[0]
+                _, _, _, state, response, status, _ = existing[0]
                 if response:
                     return json.loads(response), status
                 return {"ok": False, "estado": "procesando", "error": "Este pago ya se está procesando. No generes otro cobro"}, 409
@@ -63,7 +85,7 @@ class PaymentLedger:
     def set_context(self, order_id, context):
         with closing(sqlite3.connect(self.path, timeout=10)) as db, db:
             db.execute("UPDATE payments SET context = ? WHERE order_id = ? AND context IS NULL",
-                       (json.dumps(context), order_id))
+                       (self._encrypt_context(order_id, context), order_id))
 
     def get(self, order_id, owner=None):
         with closing(sqlite3.connect(self.path, timeout=10)) as db:
@@ -72,7 +94,7 @@ class PaymentLedger:
         if not row or (owner is not None and row[4] != self._hash(owner)):
             return None
         return {"state": row[0], "response": json.loads(row[1]) if row[1] else None,
-                "status": row[2], "context": json.loads(row[3]) if row[3] else None}
+                "status": row[2], "context": self._decrypt_context(order_id, row[3]) if row[3] else None}
 
     def settle(self, order_id, state, response, status):
         with closing(sqlite3.connect(self.path, timeout=10)) as db, db:

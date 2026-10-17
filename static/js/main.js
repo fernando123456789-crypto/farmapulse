@@ -272,9 +272,9 @@
   }
 
   function escaparHtml(texto) {
-    const div = document.createElement("div");
-    div.textContent = texto == null ? "" : String(texto);
-    return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    return String(texto == null ? "" : texto)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   checkoutDni.addEventListener("input", () => {
@@ -509,9 +509,9 @@
         data-farmacia="${escaparHtml(item.farmacia)}"
         data-distrito="${escaparHtml(item.distrito)}"
         data-presentacion="${escaparHtml(item.presentacion)}"
-        data-precio-unitario="${item.precio_unitario}"
-        data-precio-empaque="${item.precio_empaque}"
-        data-tipo="${item.tipo}"
+        data-precio-unitario="${escaparHtml(item.precio_unitario)}"
+        data-precio-empaque="${escaparHtml(item.precio_empaque)}"
+        data-tipo="${escaparHtml(item.tipo)}"
         data-cotizacion="${escaparHtml(item.cotizacion || "")}"
         data-en-carrito="${enCarrito}">
         <i class="${icono}"></i> ${texto}
@@ -627,7 +627,7 @@
       <strong>${escaparHtml(ahorro.medicamento)}</strong> en
       <strong>${escaparHtml(ahorro.farmacia)}</strong> a solo
       <span class="precio-destacado">${formatearSoles(ahorro.precio_unitario)}</span> por pastilla.
-      ✨ ¡Ahorras un <strong>${ahorro.porcentaje_ahorro}%</strong> frente a las marcas comerciales!
+      ✨ ¡Ahorras un <strong>${escaparHtml(ahorro.porcentaje_ahorro)}%</strong> frente a las marcas comerciales!
     `;
     panelAhorro.classList.remove("hidden");
   }
