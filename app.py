@@ -187,10 +187,10 @@ MERCADO_PAGO_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_ACCESS_TOKEN", "").strip()
 MERCADO_PAGO_WEBHOOK_SECRET = os.getenv("MERCADO_PAGO_WEBHOOK_SECRET", "").strip()
 MERCADO_PAGO_NOTIFICATION_URL = os.getenv("MERCADO_PAGO_NOTIFICATION_URL", "").strip()
 MAIL_HOST = os.getenv("MAIL_HOST", "")
-MAIL_PORT = int(os.getenv("MAIL_PORT", "587"))
+MAIL_PORT = int(os.getenv("MAIL_PORT") or "587")
 MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
-MAIL_FROM = os.getenv("MAIL_FROM", MAIL_USERNAME)
+MAIL_FROM = (os.getenv("MAIL_FROM") or MAIL_USERNAME).strip()
 _COTIZACIONES = URLSafeTimedSerializer(os.getenv("SECRET_KEY", ""), salt="farmapulse-cotizaciones")
 _VALIDACION_DIRECCION = URLSafeTimedSerializer(
     os.getenv("SECRET_KEY", ""), salt="farmapulse-direccion-google"
