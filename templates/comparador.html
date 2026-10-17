@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}FarmaPulse - Comparador de Medicamentos{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/leaflet.css') }}">
+{% endblock %}
 
 {% block content %}
 
@@ -163,8 +166,11 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='js/delivery-area.js') }}"></script>
 <!-- Datos de ubicaciones desde Flask (bloque JSON: no es script ejecutable, cumple la CSP) -->
 <script type="application/json" id="ubicaciones-data">{{ ubicaciones | tojson }}</script>
 <script src="{{ url_for('static', filename='js/ubicaciones.js') }}"></script>
-<script src="https://js.culqi.com/checkout-js"></script>
+<script src="https://sdk.mercadopago.com/js/v2"></script>
+<script src="{{ url_for('static', filename='js/mercado-pago.js', v='20261016-pago-directo') }}"></script>
 {% endblock %}

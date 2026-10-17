@@ -26,13 +26,8 @@ create index if not exists idx_scrapes_log_ejecutado_en
 
 alter table public.scrapes_log enable row level security;
 
-create policy "scrapes_log_select"
-  on public.scrapes_log for select
-  using (true);
-
-create policy "scrapes_log_insert"
-  on public.scrapes_log for insert
-  with check (true);
+-- Los registros operativos solo los escribe y consulta el proceso de servidor.
+-- Sin políticas públicas, RLS deniega el acceso anónimo y de clientes.
 
 
 -- -------------------------------------------------------------
@@ -40,7 +35,7 @@ create policy "scrapes_log_insert"
 -- -------------------------------------------------------------
 -- Para cada medicamento+farmacia, compara el precio del último
 -- scrape contra el del día anterior usando LAG() (window function).
-create or replace view public.variacion_precio_diaria as
+create or replace view public.variacion_precio_diaria with (security_invoker = true) as
 with precios_por_dia as (
   select
     p.medicamento_id,
@@ -84,7 +79,7 @@ order by c.fecha desc, medicamento, farmacia;
 -- 3) VISTA: variación SEMANAL
 -- -------------------------------------------------------------
 -- Mismo principio, pero comparando semana actual contra la anterior.
-create or replace view public.variacion_precio_semanal as
+create or replace view public.variacion_precio_semanal with (security_invoker = true) as
 with precios_por_semana as (
   select
     p.medicamento_id,

@@ -13,22 +13,66 @@
       <div data-error class="hidden text-sm rounded-lg px-3 py-2 border"></div>
       <div>
         <label class="block text-sm font-semibold text-slate-600 mb-1">Correo electrónico</label>
-        <input name="email" type="email" required placeholder="tucorreo@gmail.com"
+        <input name="email" type="email" required autocomplete="username" placeholder="tucorreo@gmail.com"
                class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
       </div>
       <div>
         <label class="block text-sm font-semibold text-slate-600 mb-1">Contraseña</label>
-        <input name="password" type="password" required minlength="6" placeholder="••••••••"
+        <input name="password" type="password" required autocomplete="current-password" placeholder="••••••••"
                class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
       </div>
       <button type="submit" class="w-full bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">
         Ingresar
       </button>
+      <button type="button" data-recuperar-contrasena class="w-full text-sm font-semibold text-fpGreenDark hover:underline">Olvidé mi contraseña</button>
+      <button type="button" data-reenviar-confirmacion class="w-full text-sm font-semibold text-fpGreenDark hover:underline">Reenviar correo de confirmación</button>
     </form>
     <p class="text-center text-sm text-slate-500 mt-5">
       ¿No tienes cuenta?
       <button type="button" data-cambiar-a-registro class="text-fpGreenDark font-semibold hover:underline">Crea una aquí</button>
     </p>
+  </div>
+</div>
+
+<div id="modalRecuperarCuenta" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="tituloRecuperarCuenta">
+  <div class="absolute inset-0 bg-fpDark/70 backdrop-blur-sm" data-cerrar-modal></div>
+  <div class="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-8 fp-fade-in">
+    <button type="button" data-cerrar-modal aria-label="Cerrar" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+    <h2 id="tituloRecuperarCuenta" class="text-xl font-extrabold text-fpDark mb-1">Recupera tu cuenta</h2>
+    <p class="text-slate-500 text-sm mb-6">Te enviaremos un enlace para crear una nueva contraseña.</p>
+    <form id="formRecuperarCuenta" class="space-y-4">
+      <div data-error class="hidden text-sm rounded-lg px-3 py-2 border" role="status" aria-live="polite"></div>
+      <div>
+        <label for="correoRecuperacion" class="block text-sm font-semibold text-slate-600 mb-1">Correo electrónico</label>
+        <input id="correoRecuperacion" name="email" type="email" required autocomplete="email" placeholder="tucorreo@gmail.com"
+               class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+      </div>
+      <button type="submit" class="w-full bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">Enviar enlace de recuperación</button>
+      <button type="button" data-cambiar-a-login class="w-full text-sm font-semibold text-fpGreenDark hover:underline">Volver a iniciar sesión</button>
+    </form>
+  </div>
+</div>
+
+<div id="modalNuevaContrasena" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="tituloNuevaContrasena">
+  <div class="absolute inset-0 bg-fpDark/70 backdrop-blur-sm"></div>
+  <div class="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-8 fp-fade-in">
+    <h2 id="tituloNuevaContrasena" class="text-xl font-extrabold text-fpDark mb-1">Crea una nueva contraseña</h2>
+    <p class="text-slate-500 text-sm mb-6">Usa al menos 12 caracteres, con mayúsculas, minúsculas, números y un símbolo.</p>
+    <form id="formNuevaContrasena" class="space-y-4">
+      <div data-error class="hidden text-sm rounded-lg px-3 py-2 border" role="status" aria-live="polite"></div>
+      <div>
+        <label for="nuevaContrasena" class="block text-sm font-semibold text-slate-600 mb-1">Nueva contraseña</label>
+        <input id="nuevaContrasena" name="password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"
+               class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+      </div>
+      <div>
+        <label for="confirmarContrasena" class="block text-sm font-semibold text-slate-600 mb-1">Repite la contraseña</label>
+        <input id="confirmarContrasena" name="password_confirmation" type="password" required minlength="12" maxlength="128" autocomplete="new-password"
+               class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+      </div>
+      <button type="submit" class="w-full bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">Guardar contraseña</button>
+      <button type="button" data-cancelar-recuperacion class="w-full text-sm font-semibold text-slate-600 hover:underline">Cancelar</button>
+    </form>
   </div>
 </div>
 
@@ -52,16 +96,47 @@
       </div>
       <div>
         <label class="block text-sm font-semibold text-slate-600 mb-1">Contraseña</label>
-        <input name="password" type="password" required minlength="6" placeholder="Mínimo 6 caracteres"
+        <input name="password" type="password" required minlength="12" maxlength="128"
+               autocomplete="new-password" placeholder="12+ caracteres, mayúscula, número y símbolo"
                class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+        <p class="text-xs text-slate-500 mt-1">Incluye mayúsculas, minúsculas, números y un símbolo; no uses espacios.</p>
       </div>
       <button type="submit" class="w-full bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">
         Crear cuenta
       </button>
+      <button type="button" data-reenviar-confirmacion class="w-full text-sm font-semibold text-fpGreenDark hover:underline">Reenviar correo de confirmación</button>
     </form>
     <p class="text-center text-sm text-slate-500 mt-5">
       ¿Ya tienes cuenta?
       <button type="button" data-cambiar-a-login class="text-fpGreenDark font-semibold hover:underline">Inicia sesión</button>
     </p>
+  </div>
+</div>
+
+<div id="modalEliminarCuenta" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="tituloEliminarCuenta">
+  <div class="absolute inset-0 bg-fpDark/70 backdrop-blur-sm" data-cerrar-modal></div>
+  <div class="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-8 fp-fade-in">
+    <button type="button" data-cerrar-modal aria-label="Cerrar" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+      <i class="fa-solid fa-xmark text-lg"></i>
+    </button>
+    <div class="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center mb-4">
+      <i class="fa-solid fa-user-xmark text-red-600 text-xl"></i>
+    </div>
+    <h2 id="tituloEliminarCuenta" class="text-xl font-extrabold text-fpDark mb-1">Eliminar cuenta</h2>
+    <p class="text-slate-500 text-sm mb-5">Esta acción es permanente. Confirma tu contraseña para eliminar tu cuenta.</p>
+    <form id="formEliminarCuenta" class="space-y-4">
+      <div data-error class="hidden text-sm rounded-lg px-3 py-2 border" role="alert"></div>
+      <div>
+        <label class="block text-sm font-semibold text-slate-600 mb-1" for="passwordEliminarCuenta">Contraseña actual</label>
+        <input id="passwordEliminarCuenta" name="password" type="password" required autocomplete="current-password"
+               class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500">
+      </div>
+      <button type="submit" class="w-full bg-red-600 hover:bg-red-700 transition text-white font-semibold rounded-xl px-6 py-3">
+        Eliminar permanentemente
+      </button>
+      <button type="button" data-cerrar-modal class="w-full text-slate-600 font-semibold rounded-xl px-6 py-2 hover:bg-slate-50">
+        Cancelar
+      </button>
+    </form>
   </div>
 </div>
