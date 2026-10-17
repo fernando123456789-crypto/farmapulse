@@ -43,7 +43,12 @@ async function run() {
     FarmaPulseAuth: { estaAutenticado: () => true, headersAuth: () => ({}), obtenerCorreoActivo: () => "buyer@example.invalid" },
     MercadoPago: class {},
     FarmaPulseMercadoPago: class {
-      async mount(amount, email, submit, onError, identity) { assert.equal(identity.nombre, "JUAN GARCIA"); mountedAmount = amount; submitCard = submit; assert.equal(email, "buyer@example.invalid"); }
+      async mount(amount, email, submit, onError, identity) {
+        assert.equal(typeof identity, "function");
+        mountedAmount = amount;
+        submitCard = async (...args) => { const payer = await identity(); assert.equal(payer.nombre, "JUAN GARCIA"); await submit(...args); };
+        assert.equal(email, "buyer@example.invalid");
+      }
       async unmount() {}
     },
     requestAnimationFrame() {}, setTimeout() {},
@@ -75,11 +80,13 @@ async function run() {
   assert.equal(helpers.itemDesdeBoton({ dataset: { cotizacion: "signed-price" } }).cotizacion, "signed-price");
   assert.doesNotMatch(helpers.botonCarritoHtml({ ...oldItem, comprable: false }), /<button/);
   await get("btnComprar").emit("click");
-  await get("btnPagarMercadoPago").emit("click");
   assert.equal(mountedAmount, 17.5);
   assert.equal(get("checkoutTotal").textContent, "S/ 17.50");
   assert.equal(get("btnPagarMercadoPago").classList.contains("hidden"), true);
   assert.equal(calls.filter(({ url }) => url === "/api/checkout/pagar").length, 0);
+  assert.equal(calls.filter(({ url }) => url === "/api/checkout/orden").length, 0, "Escribir datos no debe consumir intentos de identidad");
+  await get("checkoutNombres").emit("input");
+  assert.equal(get("mercadoPagoTarjeta").classList.contains("hidden"), false, "Editar la entrega conserva los campos de tarjeta");
   await submitCard({ token: "card-token", payment_method_id: "visa", installments: 1 }, { paymentTypeId: "credit_card" });
   const payment = calls.find(({ url }) => url === "/api/checkout/pagar");
   assert.equal(payment.body.token, "card-token");

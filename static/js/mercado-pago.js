@@ -13,12 +13,12 @@
     async mount(amount, email, onSubmit, onError, identity) {
       await this.unmount();
       const generation = this.generation;
-      if (!identity?.nombre || !/^\d{8}$/.test(identity.dni || "")) throw new Error("Verifica los datos de la compra antes de pagar");
+      if (typeof identity !== "function" && (!identity?.nombre || !/^\d{8}$/.test(identity.dni || ""))) throw new Error("Verifica los datos de la compra antes de pagar");
       const form = root.document.getElementById("mercadoPagoFormulario");
       const button = root.document.getElementById("mercadoPagoPagar");
       const validity = new Map();
       const pruebaAprobada = identity.nombre_tarjeta_prueba === "APRO-AUTH";
-      const label = `${pruebaAprobada ? "Confirmar pago de prueba" : "Confirmar pago"} · S/ ${Number(amount).toFixed(2)}`;
+      const label = `${pruebaAprobada ? "Pagar de prueba" : "Pagar"} · S/ ${Number(amount).toFixed(2)}`;
       let method = null, binVersion = 0, processing = false;
       const current = () => generation === this.generation;
       const refresh = () => {
@@ -68,16 +68,19 @@
         refresh();
         const selected = method;
         try {
+          const payer = typeof identity === "function" ? await identity() : identity;
+          if (!current()) return;
+          if (!payer?.nombre || !/^\d{8}$/.test(payer.dni || "")) throw new Error("Verifica los datos de la compra antes de pagar");
           const token = await this.sdk.fields.createCardToken({
-            cardholderName: pruebaAprobada ? "APRO-AUTH" : identity.nombre,
-            identificationType: "DNI", identificationNumber: identity.dni,
+            cardholderName: payer.nombre_tarjeta_prueba === "APRO-AUTH" ? "APRO-AUTH" : payer.nombre,
+            identificationType: "DNI", identificationNumber: payer.dni,
           });
           if (!current()) return;
           if (selected !== method) throw new Error("La tarjeta cambió mientras se preparaba el pago");
           if (!token?.id) throw new Error("Token no disponible");
           await onSubmit({ token: token.id, payment_method_id: selected.id, installments: 1 }, { paymentTypeId: selected.payment_type_id });
         } catch (error) {
-          if (current()) onError();
+          if (current()) onError(error);
         } finally {
           processing = false;
           if (current()) refresh();

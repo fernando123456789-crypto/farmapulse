@@ -46,7 +46,7 @@ vm.runInNewContext(fs.readFileSync("static/js/mercado-pago.js", "utf8"), { windo
   await fields[0].listeners.binChange({ bin: "40091753" });
   for (const field of fields) field.listeners.validityChange({ errorMessages: [] });
   assert.equal(element("mercadoPagoPagar").disabled, false);
-  assert.equal(element("mercadoPagoPagar").textContent, "Confirmar pago · S/ 15.00");
+  assert.equal(element("mercadoPagoPagar").textContent, "Pagar · S/ 15.00");
   const submit = element("mercadoPagoFormulario").listeners.submit;
   const first = submit({ preventDefault() {} });
   await submit({ preventDefault() {} });
@@ -76,10 +76,34 @@ vm.runInNewContext(fs.readFileSync("static/js/mercado-pago.js", "utf8"), { windo
   const latest = fields.slice(-3);
   await latest[0].listeners.binChange({ bin: "40091753" });
   for (const field of latest) field.listeners.validityChange({ errorMessages: [] });
-  assert.match(element("mercadoPagoPagar").textContent, /pago de prueba/);
+  assert.match(element("mercadoPagoPagar").textContent, /Pagar de prueba/);
   await element("mercadoPagoFormulario").listeners.submit({ preventDefault() {} });
   assert.equal(tokenData.cardholderName, "APRO-AUTH");
   assert.equal(tokenData.identificationNumber, "12345678");
+  await checkout.unmount();
+  let validated = false;
+  await checkout.mount(15, "test@example.invalid", async () => { assert.equal(validated, true); }, () => errors++, async () => {
+    validated = true;
+    return { nombre: "JUAN GARCIA", dni: "12345678" };
+  });
+  assert.equal(validated, false, "Mostrar la tarjeta no debe validar identidad");
+  const direct = fields.slice(-3);
+  await direct[0].listeners.binChange({ bin: "40091753" });
+  for (const field of direct) field.listeners.validityChange({ errorMessages: [] });
+  await element("mercadoPagoFormulario").listeners.submit({ preventDefault() {} });
+  assert.equal(validated, true);
+  assert.equal(tokenData.cardholderName, "JUAN GARCIA");
+  await checkout.unmount();
+  const tokensBeforeInvalidIdentity = tokens;
+  let identityError;
+  await checkout.mount(15, "test@example.invalid", async () => { assert.fail("No debe cobrar sin identidad válida"); },
+    (error) => { identityError = error; }, async () => { throw new Error("Los nombres no coinciden con el DNI"); });
+  const invalidIdentityFields = fields.slice(-3);
+  await invalidIdentityFields[0].listeners.binChange({ bin: "40091753" });
+  for (const field of invalidIdentityFields) field.listeners.validityChange({ errorMessages: [] });
+  await element("mercadoPagoFormulario").listeners.submit({ preventDefault() {} });
+  assert.equal(tokens, tokensBeforeInvalidIdentity);
+  assert.match(identityError.message, /DNI/);
   await checkout.unmount();
   console.log("OK: tres campos seguros, identidad reutilizada, un solo pago y bloqueo de envíos duplicados.");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

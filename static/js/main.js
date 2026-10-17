@@ -748,7 +748,7 @@
   // -------------------------------------------------------
   // Checkout: abrir modal con el resumen del carrito
   // -------------------------------------------------------
-  function abrirCheckout() {
+  async function abrirCheckout() {
     if (carrito.length === 0) return;
     if (!window.FarmaPulseAuth?.estaAutenticado()) {
       document.getElementById("btnAbrirLogin")?.click();
@@ -757,12 +757,13 @@
     checkoutError.classList.add("hidden");
     checkoutEmail.textContent = `Comprobante para: ${window.FarmaPulseAuth.obtenerCorreoActivo() || "tu correo de cuenta"}`;
     btnPagarMercadoPago.disabled = pagoSinConfirmar;
-    if (!pagoSinConfirmar) btnPagarMercadoPago.innerHTML = '<i class="fa-solid fa-lock"></i> Continuar con Mercado Pago';
+    if (!pagoSinConfirmar) btnPagarMercadoPago.textContent = "Preparando los campos de tarjeta…";
     btnPagarMercadoPago.classList.remove("hidden");
     if (ordenPendiente && pagoPendiente) iniciarSeguimientoPago(ordenPendiente, pagoPendiente);
     renderizarResumenCheckout();
     modalCheckout.classList.remove("hidden");
     window.requestAnimationFrame(prepararMapaEntrega);
+    if (!pagoSinConfirmar) await prepararTarjetaPago();
   }
 
   function renderizarResumenCheckout() {
@@ -797,15 +798,9 @@
     estadoMercadoPago.classList.add("hidden");
   }
 
-  async function invalidarFormularioPago() {
-    if (cobroEnCurso || pagoSinConfirmar || !checkoutMercadoPago) return;
-    const version = ++versionCheckout;
-    try { await checkoutMercadoPago.unmount(); } catch (error) { /* La orden anterior sigue protegida por el servidor. */ }
-    if (version !== versionCheckout) return;
-    tarjetaMercadoPago.classList.add("hidden");
-    estadoMercadoPago.classList.add("hidden");
-    btnPagarMercadoPago.textContent = "Continuar con Mercado Pago";
-    btnPagarMercadoPago.classList.remove("hidden");
+  function invalidarFormularioPago() {
+    if (cobroEnCurso || pagoSinConfirmar) return;
+    checkoutError.classList.add("hidden");
   }
 
   [checkoutDni, checkoutApellidos, checkoutNombres, checkoutTelefono, checkoutDistrito, checkoutDireccion]
@@ -833,7 +828,7 @@
     checkoutError.textContent = data.error || "No se pudo confirmar el pago";
     pagoSinConfirmar = ["pendiente", "sin_confirmar", "procesando"].includes(data.estado);
     btnPagarMercadoPago.disabled = pagoSinConfirmar;
-    btnPagarMercadoPago.textContent = pagoSinConfirmar ? "Pago pendiente de confirmación" : "Continuar con Mercado Pago";
+    btnPagarMercadoPago.textContent = pagoSinConfirmar ? "Pago pendiente de confirmación" : "Revisa los datos e intenta pagar nuevamente";
     return false;
   }
 
@@ -876,17 +871,13 @@
     el.addEventListener("click", cerrarCheckout)
   );
 
-  btnPagarMercadoPago.addEventListener("click", async () => {
+  async function prepararTarjetaPago() {
     if (cobroEnCurso || pagoSinConfirmar || carrito.length === 0) return;
     checkoutError.classList.add("hidden");
     checkoutError.classList.remove("border-green-200", "bg-green-50", "text-green-700");
     checkoutError.classList.add("border-red-200", "bg-red-50", "text-red-700");
-    if (![checkoutDni, checkoutApellidos, checkoutNombres, checkoutTelefono, checkoutDistrito, checkoutDireccion].every((campo) => campo.reportValidity())) return;
-    if (!checkoutPlaceId.value || !checkoutDireccionValidacion.value) {
-      checkoutError.textContent = "Marca el punto exacto de entrega dentro de la zona de reparto.";
-      checkoutError.classList.remove("hidden");
-      return;
-    }
+    await cargaConfigServicio;
+    if (cobroEnCurso || modalCheckout.classList.contains("hidden")) return;
     if (!configServicio.pasarela_configurada || !configServicio.mercado_pago_public_key) {
       checkoutError.textContent = "Mercado Pago todavía no está configurado. Contacta a soporte.";
       checkoutError.classList.remove("hidden");
@@ -901,17 +892,18 @@
     const versionActual = ++versionCheckout;
     btnPagarMercadoPago.disabled = true;
     btnPagarMercadoPago.textContent = "Preparando pago...";
-    const datosCheckout = {
+    const leerDatosCheckout = () => ({
       apellidos: checkoutApellidos.value.trim(), nombres: checkoutNombres.value.trim(),
       dni: checkoutDni.value.trim(), telefono: checkoutTelefono.value.trim(), distrito: checkoutDistrito.value,
       direccion: checkoutDireccion.value.trim(), place_id: checkoutPlaceId.value,
       direccion_validacion: checkoutDireccionValidacion.value, productos: carrito.map((item) => ({ ...item })),
-    };
+    });
+    let datosCheckout;
     async function actualizarPreciosCarrito() {
       const anterior = JSON.stringify(carrito);
       const response = await fetch("/api/checkout/cotizar", {
         method: "POST", headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
-        body: JSON.stringify({ productos: datosCheckout.productos }),
+        body: JSON.stringify({ productos: carrito.map((item) => ({ ...item })) }),
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "No pudimos preparar tu compra. Intenta nuevamente.");
@@ -919,13 +911,20 @@
         throw new Error("El carrito cambió mientras preparábamos el pago. Revisa el resumen y continúa.");
       }
       carrito = data.productos;
-      datosCheckout.productos = carrito.map((item) => ({ ...item }));
       guardarCarritoStorage(carrito);
       renderizarCarrito();
       actualizarBotonesFilaSegunCarrito();
       renderizarResumenCheckout();
     }
     async function prepararOrden() {
+      if (![checkoutDni, checkoutApellidos, checkoutNombres, checkoutTelefono, checkoutDistrito, checkoutDireccion].every((campo) => campo.reportValidity())) {
+        throw new Error("Completa tus datos de entrega antes de pagar.");
+      }
+      if (!checkoutPlaceId.value || !checkoutDireccionValidacion.value) {
+        throw new Error("Marca el punto exacto de entrega dentro de la zona de reparto.");
+      }
+      cobroEnCurso = true;
+      datosCheckout = leerDatosCheckout();
       const response = await fetch("/api/checkout/orden", {
         method: "POST", headers: { "Content-Type": "application/json", ...window.FarmaPulseAuth.headersAuth() },
         body: JSON.stringify(datosCheckout),
@@ -936,16 +935,19 @@
     }
     try {
       await actualizarPreciosCarrito();
-      let orden = await prepararOrden();
+      let orden;
+      const importeMostrado = Math.round((totalCarrito() + Number(configServicio.costo_delivery || 0)) * 100);
       if (!checkoutMercadoPago) checkoutMercadoPago = new window.FarmaPulseMercadoPago(configServicio.mercado_pago_public_key);
       tarjetaMercadoPago.classList.remove("hidden");
       estadoMercadoPago.classList.add("hidden");
-      await checkoutMercadoPago.mount(orden.amount / 100, window.FarmaPulseAuth.obtenerCorreoActivo(), async (formData, additionalData) => {
-        if (cobroEnCurso || pagoSinConfirmar || versionActual !== versionCheckout || carrito.length === 0) return;
+      await checkoutMercadoPago.mount(importeMostrado / 100, window.FarmaPulseAuth.obtenerCorreoActivo(), async (formData, additionalData) => {
+        if (pagoSinConfirmar || versionActual !== versionCheckout || carrito.length === 0) return;
         cobroEnCurso = true;
         btnPagarMercadoPago.disabled = true;
         try {
-          if (!orden) orden = await prepararOrden();
+          if (!orden || JSON.stringify(datosCheckout) !== JSON.stringify(leerDatosCheckout())) {
+            throw new Error("Los datos del pedido cambiaron. Revísalos y vuelve a pulsar Pagar.");
+          }
           let response, data;
           try {
             response = await fetch("/api/checkout/pagar", {
@@ -974,10 +976,15 @@
           cobroEnCurso = false;
           btnPagarMercadoPago.disabled = pagoSinConfirmar || carrito.length === 0;
         }
-      }, () => {
-        checkoutError.textContent = "Mercado Pago no pudo completar esta acción. Revisa los datos de la tarjeta e inténtalo nuevamente.";
+      }, (error) => {
+        cobroEnCurso = false;
+        checkoutError.textContent = error?.message || "No se pudo completar el pago. Revisa los datos de la tarjeta e inténtalo nuevamente.";
         checkoutError.classList.remove("hidden");
-      }, orden.pagador);
+      }, async () => {
+        orden = await prepararOrden();
+        if (orden.amount !== importeMostrado) throw new Error("El total cambió. Vuelve a abrir el pedido para revisar el importe antes de pagar.");
+        return orden.pagador;
+      });
       btnPagarMercadoPago.classList.add("hidden");
     } catch (error) {
       checkoutError.textContent = error.message;
@@ -986,7 +993,7 @@
       cobroEnCurso = false;
       btnPagarMercadoPago.disabled = pagoSinConfirmar;
     }
-  });
+  }
 
 
   // -------------------------------------------------------
@@ -1011,6 +1018,6 @@
     }
   }
 
-  cargarConfigServicio();
+  const cargaConfigServicio = cargarConfigServicio();
   renderizarCarrito();
 })();

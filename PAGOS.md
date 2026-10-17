@@ -1,6 +1,6 @@
 # Pagos con Mercado Pago
 
-El checkout acepta tarjetas mediante los campos seguros del SDK de Mercado Pago. El servidor crea y consulta pagos con la API oficial, verifica el importe y la referencia de la compra y envía el comprobante únicamente después de una aprobación.
+El checkout muestra directamente los campos seguros de tarjeta y un único botón «Pagar» con el importe. Al abrir el pedido se actualizan las cotizaciones; al pulsar «Pagar» se validan la entrega y la identidad en el servidor antes de tokenizar la tarjeta y crear el cargo. Editar los datos no consume intentos de identidad ni desmonta los campos de tarjeta. El servidor verifica la acreditación, el importe y la referencia y envía el comprobante únicamente después de una aprobación.
 
 Configura las credenciales de tu aplicación en el entorno del servidor:
 
@@ -24,4 +24,4 @@ Los pagos pendientes, la verificación bancaria y los fallos de conexión no se 
 
 Los comprobantes por correo son constancias informativas de pago; no sustituyen una boleta o factura electrónica de SUNAT.
 
-Para probar una aprobación inmediata, activa `MERCADO_PAGO_TEST_APPROVAL=1` y usa una tarjeta oficial de pruebas. El servidor comprueba con `/users/me` que las credenciales pertenezcan a un comercio de pruebas de Perú antes de indicar al SDK el escenario `APRO-AUTH`. El botón se identifica como pago de prueba. La identidad del comprador, el importe y la comprobación de acreditación se mantienen; las credenciales de un comercio real no habilitan este escenario. Desactiva esta opción para probar rechazos o el desafío 3DS.
+Para probar una aprobación inmediata, activa `MERCADO_PAGO_TEST_APPROVAL=1` y usa una tarjeta oficial de pruebas. El servidor comprueba con `/users/me` que las credenciales pertenezcan a un comercio de pruebas de Perú antes de indicar al SDK el escenario `APRO-AUTH`. El comprobante se identifica como prueba. La identidad del comprador, el importe y la comprobación de acreditación se mantienen; las credenciales de un comercio real no habilitan este escenario. Desactiva esta opción para probar rechazos o el desafío 3DS.

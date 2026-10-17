@@ -78,9 +78,7 @@
         <button type="button" id="checkoutUsarCentro" class="text-sm font-semibold text-fpGreenDark underline">Elegir el centro del mapa</button>
         <p id="checkoutEmail" class="text-xs text-slate-500"></p>
         <div id="checkoutError" class="hidden text-sm rounded-lg px-3 py-2 border border-red-200 bg-red-50 text-red-700" role="alert"></div>
-        <button type="button" id="btnPagarMercadoPago" class="w-full inline-flex items-center justify-center gap-2 bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">
-          <i class="fa-solid fa-lock"></i> Continuar con Mercado Pago
-        </button>
+        <p id="btnPagarMercadoPago" class="text-sm text-slate-500" role="status" aria-live="polite">Preparando los campos de tarjeta…</p>
         <div id="mercadoPagoTarjeta" class="hidden" aria-label="Pago con tarjeta en Mercado Pago">
           <form id="mercadoPagoFormulario" class="pago-tarjeta" novalidate>
             <div class="pago-tarjeta-campo">
@@ -97,7 +95,7 @@
                 <div id="mercadoPagoSeguridad" class="pago-tarjeta-input" aria-labelledby="pagoSeguridadEtiqueta"></div>
               </div>
             </div>
-            <button id="mercadoPagoPagar" class="pago-tarjeta-boton" type="submit" disabled>Confirmar pago</button>
+            <button id="mercadoPagoPagar" class="pago-tarjeta-boton" type="submit" disabled>Pagar</button>
           </form>
         </div>
         <div id="mercadoPagoEstado" class="hidden" aria-label="Estado del pago en Mercado Pago"></div>
