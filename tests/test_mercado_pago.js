@@ -70,5 +70,16 @@ vm.runInNewContext(fs.readFileSync("static/js/mercado-pago.js", "utf8"), { windo
   await submit({ preventDefault() {} });
   assert.equal(tokens, 1);
   assert.equal(errors, 0);
+  await checkout.mount(15, "test@example.invalid", async () => {}, () => errors++, {
+    nombre: "JUAN GARCIA", dni: "12345678", nombre_tarjeta_prueba: "APRO-AUTH",
+  });
+  const latest = fields.slice(-3);
+  await latest[0].listeners.binChange({ bin: "40091753" });
+  for (const field of latest) field.listeners.validityChange({ errorMessages: [] });
+  assert.match(element("mercadoPagoPagar").textContent, /pago de prueba/);
+  await element("mercadoPagoFormulario").listeners.submit({ preventDefault() {} });
+  assert.equal(tokenData.cardholderName, "APRO-AUTH");
+  assert.equal(tokenData.identificationNumber, "12345678");
+  await checkout.unmount();
   console.log("OK: tres campos seguros, identidad reutilizada, un solo pago y bloqueo de envíos duplicados.");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

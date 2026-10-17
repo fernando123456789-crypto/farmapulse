@@ -1,5 +1,6 @@
 from copy import deepcopy
 import hashlib
+import os
 import hmac
 import smtplib
 import tempfile
@@ -13,6 +14,26 @@ from test_identity_security import CheckoutIdentityFixture
 
 
 class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
+    def test_approval_scenario_requires_verified_test_merchant(self):
+        with patch.dict(os.environ, {"MERCADO_PAGO_TEST_APPROVAL": "1"}):
+            with patch.object(self.module, "_comercio_de_pruebas", return_value=False):
+                self.assertNotIn("nombre_tarjeta_prueba", self.order().json["pagador"])
+            with patch.object(self.module, "_comercio_de_pruebas", return_value=True):
+                data = self.order().json
+                self.assertEqual(data["pagador"]["nombre_tarjeta_prueba"], "APRO-AUTH")
+                self.assertEqual(data["pagador"]["nombre"], self.body["nombres"] + " " + self.body["apellidos"])
+
+    def test_test_merchant_detection_is_verified_with_provider(self):
+        self.module._comercio_de_pruebas.cache_clear()
+        with patch.object(self.module.requests, "get") as get:
+            get.return_value.json.return_value = {"site_id": "MPE", "tags": ["test_user"]}
+            self.assertTrue(self.module._comercio_de_pruebas("sandbox-token"))
+            self.assertTrue(self.module._comercio_de_pruebas("sandbox-token"))
+            self.assertEqual(get.call_count, 1)
+            get.return_value.json.return_value = {"site_id": "MPE", "tags": []}
+            self.assertFalse(self.module._comercio_de_pruebas("production-token"))
+        self.module._comercio_de_pruebas.cache_clear()
+
     def setUp(self):
         super().setUp()
         self.lookup.return_value = {"nombre": "GARCIA LOPEZ JUAN CARLOS"}

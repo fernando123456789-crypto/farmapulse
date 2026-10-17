@@ -34,7 +34,7 @@ import unicodedata
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from email.message import EmailMessage
-from functools import wraps
+from functools import wraps, lru_cache
 from pathlib import Path
 
 import requests
@@ -156,6 +156,18 @@ _VALIDACION_DIRECCION = URLSafeTimedSerializer(
 def _pagos_configurados():
     return bool(MERCADO_PAGO_PUBLIC_KEY and MERCADO_PAGO_ACCESS_TOKEN
                 and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM)
+
+
+@lru_cache(maxsize=4)
+def _comercio_de_pruebas(access_token):
+    try:
+        respuesta = requests.get("https://api.mercadopago.com/users/me",
+            headers={"Authorization": f"Bearer {access_token}"}, timeout=5)
+        respuesta.raise_for_status()
+        datos = respuesta.json()
+        return datos.get("site_id") == "MPE" and "test_user" in datos.get("tags", [])
+    except (requests.RequestException, ValueError, AttributeError, TypeError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -926,8 +938,11 @@ def api_checkout_orden():
     orden_id = f"fp_{uuid.uuid4().hex}"
     firma = _COTIZACIONES.dumps({**cliente, "id": orden_id, "amount": centimos, "email": email,
                                "identidad_validada": True, "usuario_id": g.usuario.get("id")})
+    pagador = {"nombre": f"{cliente['nombres']} {cliente['apellidos']}", "dni": dni}
+    if os.getenv("MERCADO_PAGO_TEST_APPROVAL") == "1" and _comercio_de_pruebas(MERCADO_PAGO_ACCESS_TOKEN):
+        pagador["nombre_tarjeta_prueba"] = "APRO-AUTH"
     return jsonify({"ok": True, "orden_id": orden_id, "orden_firma": firma, "amount": centimos,
-                    "pagador": {"nombre": f"{cliente['nombres']} {cliente['apellidos']}", "dni": dni}})
+                    "pagador": pagador})
 
 
 @app.route("/api/checkout/pagar", methods=["POST"])

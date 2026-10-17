@@ -23,3 +23,5 @@ La Public Key puede usarse en el navegador; el Access Token y la clave de firma 
 Los pagos pendientes, la verificación bancaria y los fallos de conexión no se muestran como compras exitosas. La protección contra duplicados se aplica tanto en el almacenamiento local como con `X-Idempotency-Key` en la petición a Mercado Pago. Los detalles de configuración, persistencia y conciliación están en [CONFIGURACION.md](CONFIGURACION.md).
 
 Los comprobantes por correo son constancias informativas de pago; no sustituyen una boleta o factura electrónica de SUNAT.
+
+Para probar una aprobación inmediata, activa `MERCADO_PAGO_TEST_APPROVAL=1` y usa una tarjeta oficial de pruebas. El servidor comprueba con `/users/me` que las credenciales pertenezcan a un comercio de pruebas de Perú antes de indicar al SDK el escenario `APRO-AUTH`. El botón se identifica como pago de prueba. La identidad del comprador, el importe y la comprobación de acreditación se mantienen; las credenciales de un comercio real no habilitan este escenario. Desactiva esta opción para probar rechazos o el desafío 3DS.

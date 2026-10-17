@@ -17,7 +17,8 @@
       const form = root.document.getElementById("mercadoPagoFormulario");
       const button = root.document.getElementById("mercadoPagoPagar");
       const validity = new Map();
-      const label = `Confirmar pago · S/ ${Number(amount).toFixed(2)}`;
+      const pruebaAprobada = identity.nombre_tarjeta_prueba === "APRO-AUTH";
+      const label = `${pruebaAprobada ? "Confirmar pago de prueba" : "Confirmar pago"} · S/ ${Number(amount).toFixed(2)}`;
       let method = null, binVersion = 0, processing = false;
       const current = () => generation === this.generation;
       const refresh = () => {
@@ -68,7 +69,8 @@
         const selected = method;
         try {
           const token = await this.sdk.fields.createCardToken({
-            cardholderName: identity.nombre, identificationType: "DNI", identificationNumber: identity.dni,
+            cardholderName: pruebaAprobada ? "APRO-AUTH" : identity.nombre,
+            identificationType: "DNI", identificationNumber: identity.dni,
           });
           if (!current()) return;
           if (selected !== method) throw new Error("La tarjeta cambió mientras se preparaba el pago");

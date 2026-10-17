@@ -52,6 +52,7 @@ class CheckoutIdentityFixture:
 
     def setUp(self):
         m = self.module
+        self.patch(patch.dict(os.environ, {"MERCADO_PAGO_TEST_APPROVAL": ""}))
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         store = IdentitySecurity(Path(directory.name) / "security.sqlite3", "test-secret")
