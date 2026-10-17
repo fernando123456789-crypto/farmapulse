@@ -816,7 +816,7 @@
       renderizarCarrito();
       tarjetaMercadoPago.classList.add("hidden");
       checkoutError.textContent = data.comprobante_enviado
-        ? `¡Compra realizada con éxito! Enviamos el comprobante a tu correo. Operación: ${data.pago_id}.`
+        ? "Compra exitosa, revisa tu correo. Estamos en camino."
         : `${data.mensaje} Operación: ${data.pago_id}.`;
       checkoutError.classList.remove("border-red-200", "bg-red-50", "text-red-700");
       checkoutError.classList.add("border-green-200", "bg-green-50", "text-green-700");

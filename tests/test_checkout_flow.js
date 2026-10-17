@@ -92,7 +92,7 @@ async function run() {
   assert.equal(payment.body.token, "card-token");
   assert.equal(payment.body.orden_firma, "signed-order");
   assert.equal(payment.body.productos[0].cotizacion, "signed-price");
-  assert.match(get("checkoutError").textContent, /Compra realizada con éxito/);
+  assert.equal(get("checkoutError").textContent, "Compra exitosa, revisa tu correo. Estamos en camino.");
   assert.equal(storage.has("farmapulse_carrito"), false);
   console.log("OK: carrito antiguo, cotización automática, tarjeta y confirmación del comprobante.");
 }
