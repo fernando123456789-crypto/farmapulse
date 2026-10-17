@@ -268,6 +268,18 @@ def auth_recuperar_contrasena(email: str, redirect_to: str) -> dict:
     return _leer_respuesta_correo_auth(respuesta, "recuperación")
 
 
+def _limite_correo_auth():
+    if request.remote_addr in {"127.0.0.1", "::1"}:
+        try:
+            hasta = datetime.fromisoformat(os.getenv("AUTH_EMAIL_TEST_UNTIL", ""))
+            segundos = (hasta - datetime.now(timezone.utc)).total_seconds()
+            if 0 < segundos <= 3600:
+                return "10 per hour"
+        except (ValueError, TypeError):
+            pass
+    return "3 per hour"
+
+
 def auth_iniciar_sesion(email: str, password: str) -> dict:
     respuesta = requests.post(
         _auth_url("/token?grant_type=password"), headers=_auth_headers(),
@@ -1157,7 +1169,7 @@ def api_auth_registro():
 @app.route("/api/auth/reenviar-confirmacion", methods=["POST"])
 @csrf.exempt
 @limiter.limit("1 per minute")
-@limiter.limit("3 per hour")
+@limiter.limit(_limite_correo_auth)
 def api_auth_reenviar_confirmacion():
     if not _supabase_configurado():
         return jsonify({"ok": False, "error": "El servicio de autenticación no está disponible"}), 503
@@ -1180,7 +1192,7 @@ def api_auth_reenviar_confirmacion():
 @app.route("/api/auth/recuperar-contrasena", methods=["POST"])
 @csrf.exempt
 @limiter.limit("1 per minute")
-@limiter.limit("3 per hour")
+@limiter.limit(_limite_correo_auth)
 def api_auth_recuperar_contrasena():
     if not _supabase_configurado():
         return jsonify({"ok": False, "error": "El servicio de autenticación no está disponible"}), 503

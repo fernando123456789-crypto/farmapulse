@@ -1,11 +1,27 @@
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 from test_identity_security import CheckoutIdentityFixture
 
 
 class AuthRecoveryTests(CheckoutIdentityFixture, unittest.TestCase):
+    def test_temporary_email_limit_is_local_bounded_and_expires(self):
+        now = datetime(2026, 10, 17, tzinfo=timezone.utc)
+        cases = (("", "127.0.0.1", "3 per hour"),
+                 ("invalid", "127.0.0.1", "3 per hour"),
+                 ((now + timedelta(minutes=30)).isoformat(), "127.0.0.1", "10 per hour"),
+                 ((now + timedelta(minutes=30)).isoformat(), "203.0.113.1", "3 per hour"),
+                 ((now - timedelta(seconds=1)).isoformat(), "127.0.0.1", "3 per hour"),
+                 ((now + timedelta(hours=2)).isoformat(), "127.0.0.1", "3 per hour"))
+        with patch.object(self.module, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = now
+            for until, ip, expected in cases:
+                with self.subTest(until=until, ip=ip), patch.dict(os.environ, {"AUTH_EMAIL_TEST_UNTIL": until}):
+                    with self.module.app.test_request_context(environ_base={"REMOTE_ADDR": ip}):
+                        self.assertEqual(self.module._limite_correo_auth(), expected)
+
     def setUp(self):
         super().setUp()
         self.payment.return_value.status_code = 200

@@ -12,6 +12,8 @@ El botón «Reenviar correo de confirmación» permite recuperar una confirmaci�
 
 ## Recuperación de contraseña
 
+Para probar el correo localmente, `AUTH_EMAIL_TEST_UNTIL` admite una fecha ISO con zona UTC dentro de la próxima hora. Hasta esa fecha, reenvío y recuperación aceptan 10 solicitudes por hora desde loopback; conservan una solicitud por minuto. Al vencer, o si la fecha es inválida o excede una hora, vuelve el límite de 3/h. Los límites de Supabase siguen vigentes.
+
 «Olvidé mi contraseña» solicita un enlace a través de Supabase Auth (`/recover`), con el mismo destino HTTPS autorizado que la confirmación. La respuesta no revela si existe la cuenta. El endpoint mantiene los límites de una solicitud por minuto y tres por hora por IP y no envía enlaces para correos bloqueados por validación de identidad.
 
 El enlace con `type=recovery` abre el formulario de nueva contraseña. La app retira los tokens de la URL, valida la sesión con el servidor y conserva temporalmente la recuperación en `sessionStorage` para permitir recargar la pestaña. La contraseña debe cumplir la política de al menos 12 caracteres, mayúscula, minúscula, número y símbolo. El servidor actualiza únicamente al titular del Bearer token mediante Supabase `/user`; no acepta un identificador ni un correo de destino desde el navegador. Al guardar, se limpia la recuperación y se inicia la sesión. Cancelar descarta los datos temporales; los enlaces vencidos permiten solicitar uno nuevo.
