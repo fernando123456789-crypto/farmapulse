@@ -192,14 +192,21 @@ MAIL_PORT = int(os.getenv("MAIL_PORT") or "587")
 MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
 MAIL_FROM = (os.getenv("MAIL_FROM") or MAIL_USERNAME).strip()
+EMAIL_PROVIDER = (os.getenv("EMAIL_PROVIDER") or "smtp").strip().lower()
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+RESEND_FROM = os.getenv("RESEND_FROM", "").strip()
 _COTIZACIONES = URLSafeTimedSerializer(os.getenv("SECRET_KEY", ""), salt="farmapulse-cotizaciones")
 _VALIDACION_DIRECCION = URLSafeTimedSerializer(
     os.getenv("SECRET_KEY", ""), salt="farmapulse-direccion-google"
 )
 
 def _pagos_configurados():
-    return bool(MERCADO_PAGO_PUBLIC_KEY and MERCADO_PAGO_ACCESS_TOKEN
-                and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM)
+    correo_configurado = (
+        EMAIL_PROVIDER == "smtp" and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM
+    ) or (
+        EMAIL_PROVIDER == "resend" and RESEND_API_KEY and RESEND_FROM
+    )
+    return bool(MERCADO_PAGO_PUBLIC_KEY and MERCADO_PAGO_ACCESS_TOKEN and correo_configurado)
 
 
 @lru_cache(maxsize=4)
@@ -762,6 +769,25 @@ def _enviar_comprobante(email: str, nombre: str, dni: str, cliente: dict, produc
     if not prueba:
         lineas.extend(["", "Este correo confirma el pago procesado por Mercado Pago."])
     mensaje.set_content("\n".join(lineas))
+    if EMAIL_PROVIDER == "resend":
+        respuesta = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Idempotency-Key": f"receipt/{pago_id}",
+            },
+            json={
+                "from": RESEND_FROM,
+                "to": [email],
+                "subject": mensaje["Subject"],
+                "text": mensaje.get_body(preferencelist=("plain",)).get_content(),
+            },
+            timeout=15,
+        )
+        respuesta.raise_for_status()
+        return
+    if EMAIL_PROVIDER != "smtp":
+        raise RuntimeError("El proveedor de correo configurado no es válido")
     with smtplib.SMTP(MAIL_HOST, MAIL_PORT, timeout=15) as servidor:
         servidor.starttls(context=ssl.create_default_context())
         servidor.login(MAIL_USERNAME, MAIL_PASSWORD)
@@ -1165,7 +1191,7 @@ def _entregar_comprobante(orden_id):
             _enviar_comprobante(context["email"], cliente["nombre"], cliente["dni"], cliente,
                 context["productos"], Decimal(context["subtotal"]), Decimal(context["delivery"]),
                 Decimal(context["total"]), result["pago_id"])
-        except (smtplib.SMTPException, OSError):
+        except (smtplib.SMTPException, requests.RequestException, OSError):
             app.logger.warning("No se pudo enviar el comprobante del pago %s", result["pago_id"])
         else:
             result.update(comprobante_enviado=True, mensaje="Tu compra fue realizada con éxito")

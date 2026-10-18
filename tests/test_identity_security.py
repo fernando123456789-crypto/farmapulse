@@ -52,6 +52,7 @@ class CheckoutIdentityFixture:
 
     def setUp(self):
         m = self.module
+        self.real_receipt_sender = m._enviar_comprobante
         self.patch(patch.dict(os.environ, {"MERCADO_PAGO_TEST_APPROVAL": ""}))
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -59,8 +60,9 @@ class CheckoutIdentityFixture:
         self.user = {"id": "test-user", "email": "test@example.invalid"}
         settings = {key: "test" for key in (
             "MERCADO_PAGO_PUBLIC_KEY", "MERCADO_PAGO_ACCESS_TOKEN", "MAIL_HOST", "MAIL_USERNAME",
-            "MAIL_PASSWORD", "MAIL_FROM", "RENIEC_TOKEN",
+            "MAIL_PASSWORD", "MAIL_FROM", "RENIEC_TOKEN", "RESEND_API_KEY", "RESEND_FROM",
         )}
+        settings["EMAIL_PROVIDER"] = "smtp"
         settings["identity_security"] = store
         settings["MERCADO_PAGO_PUBLIC_KEY"] = "TEST-public-prueba"
         settings["MERCADO_PAGO_ACCESS_TOKEN"] = "TEST-access-prueba"

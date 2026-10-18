@@ -6,6 +6,7 @@ import smtplib
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -88,6 +89,81 @@ class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
         self.test_merchant.return_value = False
         self.assertFalse(self.client.get("/api/config").json["pasarela_configurada"])
         self.payment.assert_not_called()
+
+    def test_resend_configuration_enables_receipts_without_smtp_credentials(self):
+        with patch.multiple(self.module, EMAIL_PROVIDER="resend", RESEND_API_KEY="re_test_key",
+                            RESEND_FROM="FarmaPulse <recibos@example.com>", MAIL_HOST="",
+                            MAIL_USERNAME="", MAIL_PASSWORD="", MAIL_FROM=""):
+            self.assertTrue(self.module._pagos_configurados())
+            self.assertTrue(self.client.get("/api/config").json["pasarela_configurada"])
+
+    def test_resend_requires_both_api_key_and_verified_sender_configuration(self):
+        with patch.multiple(self.module, EMAIL_PROVIDER="resend", RESEND_API_KEY="", RESEND_FROM=""):
+            self.assertFalse(self.module._pagos_configurados())
+
+    def test_receipt_can_use_resend_https_api(self):
+        response = Mock()
+        with patch.multiple(self.module, EMAIL_PROVIDER="resend", RESEND_API_KEY="re_test_key",
+                            RESEND_FROM="FarmaPulse <recibos@example.com>"), \
+                patch.object(self.module.requests, "post", return_value=response) as send:
+            self.real_receipt_sender(
+                "buyer@example.com", "Comprador", "12345678",
+                {"nombre": "Comprador", "dni": "12345678", "direccion": "Calle 1", "distrito": "San Borja"},
+                [{"medicamento": "Producto", "presentacion": "Caja", "farmacia": "Farmacia", "precio": "10.00"}],
+                Decimal("10"), Decimal("5"), Decimal("15"), "PAY-test",
+            )
+        send.assert_called_once()
+        args, kwargs = send.call_args
+        self.assertEqual(args[0], "https://api.resend.com/emails")
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer re_test_key")
+        self.assertEqual(kwargs["headers"]["Idempotency-Key"], "receipt/PAY-test")
+        self.assertEqual(kwargs["json"]["from"], "FarmaPulse <recibos@example.com>")
+        self.assertEqual(kwargs["json"]["to"], ["buyer@example.com"])
+        self.assertIn("Comprobante de compra FarmaPulse", kwargs["json"]["subject"])
+        response.raise_for_status.assert_called_once()
+
+    def test_resend_http_error_is_reported_to_receipt_retry_logic(self):
+        response = Mock()
+        response.raise_for_status.side_effect = self.module.requests.HTTPError("provider rejected request")
+        with patch.multiple(self.module, EMAIL_PROVIDER="resend", RESEND_API_KEY="re_test_key",
+                            RESEND_FROM="FarmaPulse <recibos@example.com>"), \
+                patch.object(self.module.requests, "post", return_value=response):
+            with self.assertRaises(self.module.requests.HTTPError):
+                self.real_receipt_sender(
+                    "buyer@example.com", "Comprador", "12345678",
+                    {"nombre": "Comprador", "dni": "12345678", "direccion": "Calle 1", "distrito": "San Borja"},
+                    [{"medicamento": "Producto", "presentacion": "Caja", "farmacia": "Farmacia", "precio": "10.00"}],
+                    Decimal("10"), Decimal("5"), Decimal("15"), "PAY-test",
+                )
+        response.raise_for_status.assert_called_once()
+
+    def test_existing_smtp_receipt_path_remains_available(self):
+        smtp = Mock()
+        smtp.__enter__ = Mock(return_value=smtp)
+        smtp.__exit__ = Mock(return_value=False)
+        with patch.multiple(self.module, EMAIL_PROVIDER="smtp", MAIL_HOST="smtp.example.com",
+                            MAIL_PORT=587, MAIL_USERNAME="sender@example.com", MAIL_PASSWORD="password",
+                            MAIL_FROM="FarmaPulse <sender@example.com>"), \
+                patch.object(self.module.smtplib, "SMTP", return_value=smtp) as connect:
+            self.real_receipt_sender(
+                "buyer@example.com", "Comprador", "12345678",
+                {"nombre": "Comprador", "dni": "12345678", "direccion": "Calle 1", "distrito": "San Borja"},
+                [{"medicamento": "Producto", "presentacion": "Caja", "farmacia": "Farmacia", "precio": "10.00"}],
+                Decimal("10"), Decimal("5"), Decimal("15"), "PAY-test",
+            )
+        connect.assert_called_once_with("smtp.example.com", 587, timeout=15)
+        smtp.starttls.assert_called_once()
+        smtp.login.assert_called_once_with("sender@example.com", "password")
+        smtp.send_message.assert_called_once()
+
+    def test_resend_http_failure_leaves_approved_receipt_pending_for_retry(self):
+        with patch.multiple(self.module, EMAIL_PROVIDER="resend", RESEND_API_KEY="re_test_key",
+                            RESEND_FROM="FarmaPulse <recibos@example.com>"):
+            self.receipt.side_effect = self.module.requests.HTTPError("provider rejected request")
+            result = self.pay()
+        self.assertTrue(result.json["pago_confirmado"])
+        self.assertFalse(result.json["comprobante_enviado"])
+        self.assertEqual(self.module.payment_ledger.pending_receipts(), [self.reference])
 
     def test_card_payment_uses_merchant_credentials_without_a_buyer_mp_account(self):
         self.user["email"] = "cliente-sin-cuenta-mp@example.invalid"

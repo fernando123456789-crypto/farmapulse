@@ -2,7 +2,7 @@
 
 ## Confirmación de correo
 
-El registro y el reenvío de confirmación utilizan Supabase Auth. El SMTP local definido en `MAIL_*` envía comprobantes de compra; no configura automáticamente el SMTP de Supabase. Una respuesta exitosa del proveedor no confirma la entrega en la bandeja del destinatario. Para errores de envío o cuotas la app informa el fallo y conserva la verificación del correo como requisito de acceso.
+El registro, el reenvío de confirmación y la recuperación utilizan Supabase Auth. El proveedor configurado con `EMAIL_PROVIDER` envía comprobantes de compra desde Flask; no configura automáticamente el SMTP de Supabase. Una respuesta exitosa del proveedor no confirma la entrega en la bandeja del destinatario. Para errores de envío o cuotas la app informa el fallo y conserva la verificación del correo como requisito de acceso.
 
 Configura [Custom SMTP en Supabase](https://supabase.com/docs/guides/auth/auth-smtp), en Authentication → Email → SMTP Settings, usando el remitente autorizado. Para el Gmail configurado en el servidor: host `smtp.gmail.com`, puerto `465` (TLS) o `587` (STARTTLS), usuario y dirección remitente iguales a `MAIL_USERNAME`, contraseña de aplicación igual a `MAIL_PASSWORD` y nombre `FarmaPulse`. Obtén los valores privados del `.env` local; no los incluyas en Git. Esta configuración se realiza en el proyecto de Supabase, de forma independiente al servidor Flask.
 
