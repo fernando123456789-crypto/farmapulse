@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Panel de administración | FarmaPulse{% endblock %}
+{% block extra_head %}
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css', v='20261017-admin') }}">
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+<header class="bg-fpDark">
+  <nav class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-y-3">
+    <a href="/" class="flex items-center gap-3">
+      <div class="w-11 h-11 bg-white rounded-xl flex items-center justify-center shadow"><i class="fa-solid fa-plus text-fpGreen text-2xl"></i></div>
+      <span class="text-white font-extrabold text-xl tracking-tight leading-tight">Farma<span class="text-fpGreen">Pulse</span></span>
+    </a>
+    <ul class="hidden md:flex items-center gap-10 text-slate-200 font-medium">
+      <li><a href="/" class="hover:text-fpGreen transition">Inicio</a></li>
+      <li><a href="/comparador" class="hover:text-fpGreen transition">Servicios</a></li>
+    </ul>
+    <div class="flex items-center gap-5">{% include "_auth_navbar.html" %}</div>
+  </nav>
+</header>
+
+<main class="adm" id="admRaiz">
+  <section id="admPuerta" class="adm-card adm-gate" hidden>
+    <div class="adm-gate-icon"><i class="fa-solid fa-shield-halved"></i></div>
+    <h2 id="admPuertaTitulo">Verificando acceso…</h2>
+    <p class="adm-sub" id="admPuertaTexto"></p>
+    <p class="adm-gap-top"><button type="button" class="adm-btn" id="admPuertaBoton" hidden></button></p>
+  </section>
+
+  <div id="admPanel" hidden>
+    <header class="adm-head">
+      <div>
+        <div class="adm-kicker">FarmaPulse · Control de operaciones</div>
+        <h1 class="adm-title">Panel de administración</h1>
+        <p class="adm-sub">Compras, ingresos y productos reales del registro de pagos.</p>
+      </div>
+      <button type="button" class="adm-btn ghost sm" id="admRecargar"><i class="fa-solid fa-rotate"></i> Actualizar</button>
+    </header>
+
+    <section class="adm-card" aria-label="Filtros">
+      <form class="adm-filters" id="admFiltros" autocomplete="off">
+        <label>Desde<input class="adm-input" type="date" id="admDesde"></label>
+        <label>Hasta<input class="adm-input" type="date" id="admHasta"></label>
+        <label>Estado del pago
+          <select class="adm-input" id="admEstado">
+            <option value="">Todos</option>
+            <option value="approved">Aprobado</option>
+            <option value="pending">Pendiente</option>
+            <option value="processing">Procesando</option>
+            <option value="unknown">Sin confirmar</option>
+            <option value="rejected">Rechazado</option>
+          </select>
+        </label>
+        <button class="adm-btn" type="submit">Aplicar</button>
+        <button class="adm-btn ghost" type="button" id="admLimpiar">Limpiar</button>
+      </form>
+      <p class="adm-note">Fechas en hora de Lima. Los indicadores, gráficos y la tabla reflejan todos los filtros activos.</p>
+      <div class="adm-alert err" id="admError" role="alert" hidden></div>
+      <div class="adm-alert warn" id="admAviso" hidden></div>
+    </section>
+
+    <section class="adm-stats" aria-label="Indicadores">
+      <article class="adm-card"><div class="adm-stat-label">Compras aprobadas</div><div class="adm-stat-value" id="admCompras">—</div><div class="adm-stat-foot" id="admRegistros"></div></article>
+      <article class="adm-card"><div class="adm-stat-label">Ingresos confirmados</div><div class="adm-stat-value" id="admIngresos">—</div><div class="adm-stat-foot">Solo pagos aprobados, con delivery</div></article>
+      <article class="adm-card"><div class="adm-stat-label">Unidades compradas</div><div class="adm-stat-value" id="admUnidades">—</div><div class="adm-stat-foot">Solo pagos aprobados</div></article>
+      <article class="adm-card"><div class="adm-stat-label">Importe promedio por compra</div><div class="adm-stat-value" id="admTicket">—</div><div class="adm-stat-foot">Solo pagos aprobados</div></article>
+    </section>
+    <div class="adm-status-strip" id="admEstados"></div>
+
+    <section class="adm-grid">
+      <article class="adm-card">
+        <h2 class="adm-h2">Compras e ingresos por día</h2>
+        <p class="adm-sub">Barras: compras aprobadas · Línea: ingresos (S/)</p>
+        <div class="adm-chart"><canvas id="admGraficoTiempo" role="img" aria-label="Compras e ingresos por día"></canvas></div>
+        <p class="adm-empty" id="admVacioTiempo" hidden>No hay compras aprobadas en este rango.</p>
+      </article>
+      <article class="adm-card">
+        <h2 class="adm-h2">Productos más comprados</h2>
+        <p class="adm-sub">Unidades en pagos aprobados</p>
+        <div class="adm-chart"><canvas id="admGraficoProductos" role="img" aria-label="Productos más comprados"></canvas></div>
+        <p class="adm-empty" id="admVacioProductos" hidden>Sin productos para mostrar.</p>
+      </article>
+    </section>
+
+    <section class="adm-card adm-gap-top" id="admSeccionTabla">
+      <div class="adm-toolbar">
+        <div><h2 class="adm-h2">Historial de compras</h2><p class="adm-sub" id="admResumenTabla">Cargando…</p></div>
+        <div class="adm-filters">
+          <input class="adm-input" id="admBuscar" type="search" placeholder="Buscar cliente, correo, producto, farmacia o ID" aria-label="Buscar en compras" maxlength="100">
+          <select class="adm-input" id="admOrden" aria-label="Ordenar por">
+            <option value="fecha_desc">Fecha: más reciente</option>
+            <option value="fecha_asc">Fecha: más antigua</option>
+            <option value="producto_asc">Producto: A–Z</option>
+            <option value="producto_desc">Producto: Z–A</option>
+            <option value="cantidad_desc">Cantidad: mayor a menor</option>
+            <option value="cantidad_asc">Cantidad: menor a mayor</option>
+            <option value="importe_desc">Importe: mayor a menor</option>
+            <option value="importe_asc">Importe: menor a mayor</option>
+          </select>
+        </div>
+      </div>
+      <div class="adm-table-wrap">
+        <table class="adm-table">
+          <thead><tr>
+            <th scope="col"><button type="button" data-orden="fecha">Fecha <span data-flecha="fecha"></span></button></th>
+            <th scope="col"><button type="button" data-orden="producto">Producto <span data-flecha="producto"></span></button></th>
+            <th scope="col" class="adm-num"><button type="button" data-orden="cantidad">Cant. <span data-flecha="cantidad"></span></button></th>
+            <th scope="col">Cliente</th>
+            <th scope="col">Correo</th>
+            <th scope="col">Estado</th>
+            <th scope="col" class="adm-num"><button type="button" data-orden="importe">Importe <span data-flecha="importe"></span></button></th>
+          </tr></thead>
+          <tbody id="admFilas"></tbody>
+        </table>
+      </div>
+      <div class="adm-pager">
+        <span id="admPagina"></span>
+        <span><button type="button" class="adm-btn ghost sm" id="admPrev">← Anterior</button> <button type="button" class="adm-btn ghost sm" id="admNext">Siguiente →</button></span>
+      </div>
+    </section>
+  </div>
+</main>
+{% endblock %}
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/admin.js', v='20261017-admin') }}"></script>
+{% endblock %}

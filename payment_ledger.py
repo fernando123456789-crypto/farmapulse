@@ -23,12 +23,14 @@ class PaymentLedger:
             db.execute("""CREATE TABLE IF NOT EXISTS payments (
                 order_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
                 device_hash TEXT NOT NULL, state TEXT NOT NULL,
-                response TEXT, status INTEGER, owner_hash TEXT, context TEXT
+                response TEXT, status INTEGER, owner_hash TEXT, context TEXT, created_at TEXT
             )""")
             if "owner_hash" not in {row[1] for row in db.execute("PRAGMA table_info(payments)")}:
                 db.execute("ALTER TABLE payments ADD COLUMN owner_hash TEXT")
             if "context" not in {row[1] for row in db.execute("PRAGMA table_info(payments)")}:
                 db.execute("ALTER TABLE payments ADD COLUMN context TEXT")
+            if "created_at" not in {row[1] for row in db.execute("PRAGMA table_info(payments)")}:
+                db.execute("ALTER TABLE payments ADD COLUMN created_at TEXT")
             if "receipt_lease" not in {row[1] for row in db.execute("PRAGMA table_info(payments)")}:
                 db.execute("ALTER TABLE payments ADD COLUMN receipt_lease REAL")
             # Conservo las compras anteriores y cifro sus datos personales al abrir la base.
@@ -72,7 +74,7 @@ class PaymentLedger:
             if pending:
                 return {"ok": False, "estado": "sin_confirmar", "referencia": pending[0],
                         "error": "Ya hay un pago pendiente de confirmación. Contacta a soporte antes de pagar otra vez"}, 409
-            db.execute("INSERT INTO payments (order_id, token_hash, device_hash, owner_hash, state) VALUES (?, ?, ?, ?, 'processing')",
+            db.execute("INSERT INTO payments (order_id, token_hash, device_hash, owner_hash, state, created_at) VALUES (?, ?, ?, ?, 'processing', CURRENT_TIMESTAMP)",
                        (order_id, token_hash, device_hash, self._hash(owner)))
             return None
 
@@ -120,6 +122,59 @@ class PaymentLedger:
     def release_receipt(self, order_id):
         with closing(sqlite3.connect(self.path, timeout=10)) as db, db:
             db.execute("UPDATE payments SET receipt_lease = NULL WHERE order_id = ?", (order_id,))
+
+    def admin_list(self, desde_utc=None, hasta_utc=None):
+        """Órdenes para el panel de administración (solo tras autorizar al administrador).
+
+        `desde_utc` (inclusive) y `hasta_utc` (exclusivo) son cadenas 'YYYY-MM-DD HH:MM:SS' en UTC,
+        el formato de CURRENT_TIMESTAMP de SQLite. No devuelve DNI ni dirección: solo lo necesario
+        para consultar compras. Cada fila es una orden (order_id es clave primaria: no hay duplicados).
+        """
+        sql = "SELECT order_id, state, context, created_at FROM payments"
+        condiciones, parametros = [], []
+        if desde_utc:
+            condiciones.append("created_at >= ?")
+            parametros.append(desde_utc)
+        if hasta_utc:
+            condiciones.append("created_at < ?")
+            parametros.append(hasta_utc)
+        if condiciones:
+            sql += " WHERE " + " AND ".join(condiciones)
+        sql += " ORDER BY created_at DESC, rowid DESC"
+        with closing(sqlite3.connect(self.path, timeout=10)) as db:
+            rows = db.execute(sql, parametros).fetchall()
+        resultado = []
+        for order_id, state, encrypted_context, created_at in rows:
+            legible = True
+            try:
+                context = self._decrypt_context(order_id, encrypted_context) if encrypted_context else {}
+            except Exception:
+                context, legible = {}, False
+            if not isinstance(context, dict):
+                context, legible = {}, False
+            cliente = context.get("cliente") if isinstance(context.get("cliente"), dict) else {}
+            productos = context.get("productos") if isinstance(context.get("productos"), list) else []
+            resultado.append({
+                "id": order_id,
+                "created_at": created_at,
+                "estado": state,
+                "legible": legible,
+                "email": str(context.get("email") or ""),
+                "cliente": str(cliente.get("nombre") or ""),
+                # Cada línea del carrito es un empaque: el subtotal es la suma de sus precios
+                # sin multiplicar por cantidad, por eso cada línea cuenta como 1 unidad.
+                "productos": [{
+                    "nombre": str(p.get("medicamento") or p.get("nombre") or "Producto"),
+                    "presentacion": str(p.get("presentacion") or ""),
+                    "farmacia": str(p.get("farmacia") or ""),
+                    "cantidad": 1,
+                    "precio": str(p.get("precio") or "0"),
+                } for p in productos if isinstance(p, dict)],
+                "subtotal": str(context.get("subtotal") or "0"),
+                "delivery": str(context.get("delivery") or "0"),
+                "total": str(context.get("total") or "0"),
+            })
+        return resultado
 
     def pending_receipts(self):
         with closing(sqlite3.connect(self.path, timeout=10)) as db:

@@ -53,6 +53,7 @@ from security import validar_contrasena, validar_email, sanitizar_termino_busque
 from identity_security import IdentitySecurity
 from delivery_location import district_for_point
 from payment_ledger import PaymentLedger
+import admin_panel
 from mercado_pago import ORDER_ID, crear_orden, leer_orden
 
 # ---------------------------------------------------------------------------
@@ -506,6 +507,27 @@ def sesion_requerida(f):
     return envoltura
 
 
+def _es_admin(usuario) -> bool:
+    """El rol sale de la identidad verificada por Supabase (correo confirmado) y de ADMIN_EMAIL
+    en el servidor; nunca de datos enviados por el navegador. Admite varios correos separados por coma."""
+    if not usuario:
+        return False
+    correo = (usuario.get("email") or "").strip().lower()
+    permitidos = [c.strip().lower() for c in os.getenv("ADMIN_EMAIL", "").split(",") if c.strip()]
+    return bool(correo) and any(hmac.compare_digest(correo, c) for c in permitidos)
+
+
+def admin_requerido(f):
+    """Debe aplicarse DEBAJO de @sesion_requerida: exige además el rol administrador (403 si no)."""
+    @wraps(f)
+    def envoltura(*args, **kwargs):
+        if not _es_admin(g.usuario):
+            app.logger.warning("Acceso administrativo denegado al usuario %s en %s", g.usuario.get("id"), request.path)
+            return jsonify({"ok": False, "error": "No tienes permisos de administrador"}), 403
+        return f(*args, **kwargs)
+    return envoltura
+
+
 # ---------------------------------------------------------------------------
 # Datos geográficos — zona de cobertura actual del servicio.
 # Por ahora FarmaPulse solo opera en estos 3 distritos de Lima; agregar
@@ -654,6 +676,33 @@ def _calcular_ahorro_y_ordenar(resultados):
 # ---------------------------------------------------------------------------
 # Rutas - Vistas HTML
 # ---------------------------------------------------------------------------
+@app.route("/admin")
+def panel_administrador():
+    # La app autentica con Bearer en sessionStorage (sin cookies): una navegación del navegador no puede
+    # enviar ese encabezado. Esta página es solo la estructura vacía del panel; no contiene datos ni
+    # correos. Toda la información se pide a /api/admin/*, que sí exige sesión válida y rol administrador.
+    respuesta = app.make_response(render_template("admin_dashboard.html"))
+    respuesta.headers["Cache-Control"] = "no-store"
+    respuesta.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return respuesta
+
+
+@app.route("/api/admin/compras", methods=["GET"])
+@limiter.limit("60 per minute")
+@sesion_requerida
+@admin_requerido
+def api_admin_compras():
+    try:
+        parametros = admin_panel.leer_parametros(request.args)
+    except admin_panel.ParametrosInvalidos as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    desde_utc, hasta_utc = admin_panel.rango_utc(parametros["desde"], parametros["hasta"])
+    ordenes = payment_ledger.admin_list(desde_utc, hasta_utc)
+    respuesta = jsonify(admin_panel.construir_panel(ordenes, parametros))
+    respuesta.headers["Cache-Control"] = "no-store"
+    return respuesta
+
+
 @app.route("/")
 def index():
     """Pantalla 1: Home / Hero Landing."""
@@ -1337,6 +1386,7 @@ def api_auth_login():
     return jsonify({
         "ok": True,
         "usuario": datos.get("user"),
+        "es_admin": _es_admin(datos.get("user")),
         "access_token": datos.get("access_token"),
         "refresh_token": datos.get("refresh_token"),
     })
@@ -1409,7 +1459,7 @@ def api_auth_eliminar():
 @sesion_opcional
 def api_auth_sesion():
     if g.usuario:
-        return jsonify({"ok": True, "autenticado": True, "usuario": g.usuario})
+        return jsonify({"ok": True, "autenticado": True, "usuario": g.usuario, "es_admin": _es_admin(g.usuario)})
     return jsonify({"ok": True, "autenticado": False, "usuario": None})
 
 

@@ -1,0 +1,80 @@
+<!-- ===================== MODAL: RESUMEN DE COMPRA / CHECKOUT ===================== -->
+<div id="modalCheckout" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-fpDark/70 backdrop-blur-sm" data-cerrar-checkout></div>
+
+  <div class="relative bg-white w-full max-w-md rounded-2xl shadow-2xl fp-fade-in max-h-[92vh] overflow-y-auto">
+    <button type="button" data-cerrar-checkout class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 z-10">
+      <i class="fa-solid fa-xmark text-lg"></i>
+    </button>
+
+    <div class="p-6 md:p-7">
+      <div class="w-12 h-12 rounded-xl bg-fpMint flex items-center justify-center mb-3">
+        <i class="fa-solid fa-receipt text-fpGreen text-xl"></i>
+      </div>
+      <h2 class="text-xl font-extrabold text-fpDark mb-1">Resumen de tu pedido</h2>
+      <p class="text-slate-500 text-sm mb-5">Revisa tu lista antes de coordinar el pago por WhatsApp.</p>
+
+      <!-- Lista de productos del carrito -->
+      <div id="checkoutLista" class="space-y-2 mb-4 max-h-52 overflow-y-auto pr-1"></div>
+
+      <!-- Totales -->
+      <div class="border-t border-slate-100 pt-3 space-y-1 text-sm">
+        <div class="flex justify-between text-slate-600">
+          <span>Subtotal</span>
+          <span id="checkoutSubtotal">S/ 0.00</span>
+        </div>
+        <div class="flex justify-between text-slate-600">
+          <span>Delivery</span>
+          <span id="checkoutDelivery">S/ 0.00</span>
+        </div>
+        <div class="flex justify-between text-fpDark font-extrabold text-base pt-1">
+          <span>Total a pagar</span>
+          <span id="checkoutTotal" class="precio-destacado">S/ 0.00</span>
+        </div>
+      </div>
+
+      <!-- QR de pago -->
+      <div class="mt-5 flex flex-col items-center bg-slate-50 border border-slate-100 rounded-2xl p-4">
+        <img src="{{ url_for('static', filename='img/qr-pago-yape.jpg') }}"
+             alt="QR para pagar"
+             class="w-36 h-36 rounded-lg object-cover mb-2">
+        <p class="text-xs text-slate-400 text-center">
+          Escanea para pagar con Yape/Plin.
+        </p>
+      </div>
+
+      <!-- Info de zona / tiempo / costo -->
+      <div class="mt-4 bg-fpMint border border-fpGreen/30 rounded-xl p-4 text-sm text-fpGreenDark flex gap-3">
+        <i class="fa-solid fa-circle-info mt-0.5"></i>
+        <p>
+          Delivery disponible solo para <strong id="checkoutZona">San Borja, San Luis y La Victoria</strong>.
+          Tiempo estimado: <strong id="checkoutTiempo">35 minutos</strong>.
+          Costo de envío: <strong id="checkoutCostoEnvio">S/ 5.00</strong>.
+        </p>
+      </div>
+
+      <!-- Indicaciones -->
+      <div class="mt-5">
+        <p class="font-semibold text-slate-700 text-sm mb-2">Para completar tu pedido:</p>
+        <ol class="space-y-2 text-sm text-slate-600 list-decimal list-inside">
+          <li>Presiona <strong>"Enviar pedido por WhatsApp"</strong> abajo (te llevará al chat con el mensaje ya armado).</li>
+          <li>Dentro de WhatsApp, comparte tu <strong>ubicación</strong> (clip 📎 → Ubicación).</li>
+          <li>Verifica que la lista de productos y el total se hayan enviado correctamente.</li>
+          <li>Realiza el pago escaneando el QR y <strong>adjunta la captura del pago</strong> en el chat.</li>
+        </ol>
+      </div>
+
+      <!-- Acciones -->
+      <div class="mt-6 flex flex-col gap-2">
+        <a id="btnEnviarWhatsappPedido" href="#" target="_blank" rel="noopener noreferrer"
+           class="w-full inline-flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#1DA851] transition text-white font-semibold rounded-xl px-6 py-3">
+          <i class="fa-brands fa-whatsapp text-lg"></i> Enviar pedido por WhatsApp
+        </a>
+        <button type="button" id="btnCopiarPedido"
+                class="w-full inline-flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 transition text-slate-600 font-semibold rounded-xl px-6 py-3">
+          <i class="fa-solid fa-copy"></i> Copiar lista de pedido
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

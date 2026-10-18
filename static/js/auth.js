@@ -27,7 +27,8 @@
 
   function guardarSesion(sesion) {
     // No conservo el refresh token ni dejo sesiones permanentes en el navegador.
-    sessionStorage.setItem(CLAVE_SESION, JSON.stringify({ access_token: sesion.access_token, usuario: sesion.usuario }));
+    // es_admin solo decide si se muestra el enlace; el servidor vuelve a comprobar el rol en cada petición.
+    sessionStorage.setItem(CLAVE_SESION, JSON.stringify({ access_token: sesion.access_token, usuario: sesion.usuario, es_admin: sesion.es_admin === true }));
   }
 
   function borrarSesion() {
@@ -49,6 +50,7 @@
     obtenerAccessToken: () => obtenerSesion()?.access_token || null,
     obtenerUsuarioIdActivo: () => obtenerSesion()?.usuario?.id || obtenerUsuarioAnonimo(),
     obtenerCorreoActivo: () => obtenerSesion()?.usuario?.email || null,
+    esAdmin: () => obtenerSesion()?.es_admin === true,
     headersAuth: () => {
       const token = obtenerSesion()?.access_token;
       return token ? { Authorization: `Bearer ${token}` } : {};
@@ -62,6 +64,7 @@
   const bloqueInvitado = document.getElementById("navAuthInvitado");
   const bloqueAutenticado = document.getElementById("navAuthAutenticado");
   const spanCorreoUsuario = document.getElementById("navCorreoUsuario");
+  const enlaceAdmin = document.getElementById("navAdminLink");
 
   const modalLogin = document.getElementById("modalLogin");
   const modalRegistro = document.getElementById("modalRegistro");
@@ -82,6 +85,11 @@
     bloqueAutenticado.classList.toggle("hidden", !autenticado);
     if (autenticado && spanCorreoUsuario) {
       spanCorreoUsuario.textContent = window.FarmaPulseAuth.obtenerCorreoActivo() || "Mi cuenta";
+    }
+    if (enlaceAdmin) {
+      const esAdmin = autenticado && window.FarmaPulseAuth.esAdmin();
+      enlaceAdmin.classList.toggle("hidden", !esAdmin);
+      enlaceAdmin.classList.toggle("flex", esAdmin);
     }
   }
 
@@ -443,7 +451,7 @@
       const data = await leerRespuestaJson(respuesta);
       if (!data.ok) throw new Error(data.error || "No se pudo iniciar sesión");
 
-      guardarSesion({ access_token: data.access_token, refresh_token: data.refresh_token, usuario: data.usuario });
+      guardarSesion({ access_token: data.access_token, refresh_token: data.refresh_token, usuario: data.usuario, es_admin: data.es_admin === true });
       actualizarNavbar();
       cerrarModal(modalLogin);
       formLogin.reset();
@@ -475,6 +483,7 @@
       const respuesta = await fetch("/api/auth/sesion", { headers: { Authorization: `Bearer ${sesion.access_token}` } });
       const data = await respuesta.json();
       if (!data.autenticado) borrarSesion();
+      else if ((data.es_admin === true) !== (sesion.es_admin === true)) guardarSesion({ ...sesion, es_admin: data.es_admin === true });
     } catch { /* sin conexión: se mantiene la sesión local optimistamente */ }
     actualizarNavbar();
   }

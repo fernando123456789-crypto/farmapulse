@@ -1,0 +1,67 @@
+<div id="modalLogin" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-fpDark/70 backdrop-blur-sm" data-cerrar-modal></div>
+  <div class="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-8 fp-fade-in">
+    <button type="button" data-cerrar-modal class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+      <i class="fa-solid fa-xmark text-lg"></i>
+    </button>
+    <div class="w-12 h-12 rounded-xl bg-fpMint flex items-center justify-center mb-4">
+      <i class="fa-solid fa-right-to-bracket text-fpGreen text-xl"></i>
+    </div>
+    <h2 class="text-xl font-extrabold text-fpDark mb-1">Inicia sesión</h2>
+    <p class="text-slate-500 text-sm mb-6">Accede para guardar tu receta y ver tu historial.</p>
+    <form id="formLogin" class="space-y-4">
+      <div data-error class="hidden text-sm rounded-lg px-3 py-2 border"></div>
+      <div>
+        <label class="block text-sm font-semibold text-slate-600 mb-1">Correo electrónico</label>
+        <input name="email" type="email" required placeholder="tucorreo@gmail.com"
+               class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-slate-600 mb-1">Contraseña</label>
+        <input name="password" type="password" required minlength="6" placeholder="••••••••"
+               class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+      </div>
+      <button type="submit" class="w-full bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">
+        Ingresar
+      </button>
+    </form>
+    <p class="text-center text-sm text-slate-500 mt-5">
+      ¿No tienes cuenta?
+      <button type="button" data-cambiar-a-registro class="text-fpGreenDark font-semibold hover:underline">Crea una aquí</button>
+    </p>
+  </div>
+</div>
+
+<div id="modalRegistro" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-fpDark/70 backdrop-blur-sm" data-cerrar-modal></div>
+  <div class="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-8 fp-fade-in">
+    <button type="button" data-cerrar-modal class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+      <i class="fa-solid fa-xmark text-lg"></i>
+    </button>
+    <div class="w-12 h-12 rounded-xl bg-fpMint flex items-center justify-center mb-4">
+      <i class="fa-solid fa-user-plus text-fpGreen text-xl"></i>
+    </div>
+    <h2 class="text-xl font-extrabold text-fpDark mb-1">Crea tu cuenta</h2>
+    <p class="text-slate-500 text-sm mb-6">Regístrate con tu correo (Gmail u otro) para guardar tu receta.</p>
+    <form id="formRegistro" class="space-y-4">
+      <div data-error class="hidden text-sm rounded-lg px-3 py-2 border"></div>
+      <div>
+        <label class="block text-sm font-semibold text-slate-600 mb-1">Correo electrónico</label>
+        <input name="email" type="email" required placeholder="tucorreo@gmail.com"
+               class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-slate-600 mb-1">Contraseña</label>
+        <input name="password" type="password" required minlength="6" placeholder="Mínimo 6 caracteres"
+               class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
+      </div>
+      <button type="submit" class="w-full bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-3">
+        Crear cuenta
+      </button>
+    </form>
+    <p class="text-center text-sm text-slate-500 mt-5">
+      ¿Ya tienes cuenta?
+      <button type="button" data-cambiar-a-login class="text-fpGreenDark font-semibold hover:underline">Inicia sesión</button>
+    </p>
+  </div>
+</div>

@@ -26,6 +26,16 @@ No copio `LOCAL_HTTPS_CERT`, `LOCAL_HTTPS_KEY` ni archivos TLS de mi laptop: Ren
 
 Para conservar los pagos, bloqueos y sesiones revocadas de esta implementación, configuro `PAYMENTS_DB` e `IDENTITY_SECURITY_DB` dentro de un disco persistente montado en el servicio, y conservo `SECRET_KEY` e `IDENTITY_SECURITY_KEY`. Por ejemplo, con un disco realmente montado en `/var/data`, uso `/var/data/payments.sqlite3` y `/var/data/identity_security.sqlite3`. Esas rutas por sí solas no crean un disco persistente.
 
+## Configuro el panel de administración (`/admin`)
+
+1. **Crear la cuenta.** En Supabase → Authentication → Users → *Add user*: correo del administrador, una contraseña nueva y *Auto Confirm User* marcado. (También sirve registrarla desde la aplicación y confirmar el correo: la API solo acepta cuentas con correo confirmado.) La contraseña vive únicamente en Supabase.
+2. **Declarar el rol.** Añado la variable `ADMIN_EMAIL=<correo del administrador>` en el servicio (Render → Environment) y en el `.env` local. Admite varios correos separados por coma. Sin esta variable nadie es administrador y todas las rutas `/api/admin/*` responden 403.
+3. **Reiniciar** el servicio (Render lo hace al guardar variables). No hace falta migrar tablas.
+4. **Persistencia de las compras.** El panel lee `PAYMENTS_DB` (SQLite). En Render debe apuntar a un disco persistente (por ejemplo `/var/data/payments.sqlite3`); en Render Free los archivos locales se borran en cada despliegue y el panel quedaría vacío. Hay que conservar también `SECRET_KEY`: con otra clave los registros ya no se pueden descifrar (el panel avisa de cuántos).
+5. **Uso.** Inicia sesión en la página principal con la cuenta administradora: aparece el enlace «Administración» en el menú. Abre `/admin` desde ese enlace, **en la misma pestaña**: la sesión se guarda en `sessionStorage`, que no se comparte entre pestañas, así que pegar `/admin` en una pestaña nueva pide iniciar sesión otra vez (también se puede hacer desde la propia página del panel).
+
+Reglas de cálculo: solo los pagos `approved` cuentan como compras e ingresos; `pending`, `processing`, `unknown` y `rejected` se listan pero no suman. Cada orden es una fila única. El ingreso es el total cobrado (productos + delivery). Cada línea del carrito cuenta como una unidad, porque el sistema no guarda cantidades. Las fechas se interpretan en hora de Lima (UTC-5). El panel no muestra DNI ni dirección. El registro de pagos no contempla reembolsos, así que no aparecen.
+
 ## Compruebo las restricciones del plan
 
 Render Free bloquea conexiones salientes a los puertos SMTP `25`, `465` y `587`; por tanto, el envío actual mediante Gmail SMTP no funcionará allí aunque las credenciales sean correctas. Además, Free no admite discos persistentes y borra los archivos locales al reiniciar o desplegar.
