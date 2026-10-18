@@ -47,7 +47,6 @@
   const checkoutDireccionValidacion = document.getElementById("checkoutDireccionValidacion");
   const checkoutDireccionEstado = document.getElementById("checkoutDireccionEstado");
   const checkoutDireccionSugerencias = document.getElementById("checkoutDireccionSugerencias");
-  const checkoutEmail = document.getElementById("checkoutEmail");
   const checkoutError = document.getElementById("checkoutError");
   const btnPagarMercadoPago = document.getElementById("btnPagarMercadoPago");
 
@@ -757,7 +756,6 @@
       return;
     }
     checkoutError.classList.add("hidden");
-    checkoutEmail.textContent = `Comprobante para: ${window.FarmaPulseAuth.obtenerCorreoActivo() || "tu correo de cuenta"}`;
     btnPagarMercadoPago.disabled = pagoSinConfirmar;
     if (!pagoSinConfirmar) btnPagarMercadoPago.textContent = "Preparando los campos de tarjeta…";
     btnPagarMercadoPago.classList.remove("hidden");
@@ -825,6 +823,7 @@
       btnPagarMercadoPago.disabled = true;
       btnPagarMercadoPago.textContent = "Pago aprobado";
       clearTimeout(temporizadorEstadoPago);
+      window.setTimeout(() => { cerrarCheckout(); }, 1200);
       return true;
     }
     checkoutError.textContent = data.error || "No se pudo confirmar el pago";

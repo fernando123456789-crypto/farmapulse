@@ -696,22 +696,27 @@ def api_config():
 def _enviar_comprobante(email: str, nombre: str, dni: str, cliente: dict, productos: list, subtotal: Decimal, delivery: Decimal, total: Decimal, pago_id: str) -> None:
     mensaje = EmailMessage()
     prueba = cliente.get("compra_prueba") is True
-    mensaje["Subject"] = ("[PRUEBA] " if prueba else "") + f"Comprobante de compra FarmaPulse - {pago_id}"
+    mensaje["Subject"] = f"Comprobante de compra FarmaPulse - {pago_id}"
     mensaje["From"] = MAIL_FROM
     mensaje["To"] = email
-    lineas = [f"Hola {nombre}, tu compra fue realizada con éxito.", "", f"Comprobante de pago: {pago_id}", f"Nombre: {nombre}", f"DNI: {dni}", f"Correo: {email}", "", "Productos:"]
     if prueba:
-        lineas[:0] = ["PRUEBA DE INTEGRACIÓN: no se realizó un cobro real ni un pedido para entregar.", ""]
+        lineas = [f"Hola {nombre}, la simulación de compra en FarmaPulse se completó.", "",
+                  "Este correo corresponde a una simulación. No se realizó un cobro ni se generó un pedido real.",
+                  "", f"Referencia: {pago_id}", f"Nombre: {nombre}", f"DNI: {dni}", f"Correo: {email}", "", "Productos:"]
+    else:
+        lineas = [f"Hola {nombre}, tu compra fue realizada con éxito.", "",
+                  f"Comprobante de pago: {pago_id}", f"Nombre: {nombre}", f"DNI: {dni}", f"Correo: {email}", "", "Productos:"]
     lineas.extend(f"- {p['medicamento']} ({p['presentacion']}) en {p['farmacia']}: S/ {p['precio']}" for p in productos)
-    lineas.extend(["", f"Dirección de entrega: {cliente['direccion']}, {cliente['distrito']}",
+    lineas.extend(["", f"Dirección: {cliente['direccion']}, {cliente['distrito']}",
                    f"Subtotal: S/ {subtotal:.2f}", f"Delivery: S/ {delivery:.2f}",
-                   f"Total pagado: S/ {total:.2f}", "", "Este correo confirma el pago procesado por Mercado Pago."])
+                   f"{'Total simulado' if prueba else 'Total pagado'}: S/ {total:.2f}"])
+    if not prueba:
+        lineas.extend(["", "Este correo confirma el pago procesado por Mercado Pago."])
     mensaje.set_content("\n".join(lineas))
     with smtplib.SMTP(MAIL_HOST, MAIL_PORT, timeout=15) as servidor:
         servidor.starttls(context=ssl.create_default_context())
         servidor.login(MAIL_USERNAME, MAIL_PASSWORD)
         servidor.send_message(mensaje)
-
 
 def _datos_checkout(items: list):
     if not isinstance(items, list) or not items or len(items) > 20:
