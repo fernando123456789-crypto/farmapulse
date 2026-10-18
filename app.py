@@ -755,17 +755,12 @@ def _enviar_comprobante(email: str, nombre: str, dni: str, cliente: dict, produc
     mensaje["Subject"] = f"Comprobante de compra FarmaPulse - {pago_id}"
     mensaje["From"] = MAIL_FROM
     mensaje["To"] = email
-    if prueba:
-        lineas = [f"Hola {nombre}, la simulación de compra en FarmaPulse se completó.", "",
-                  "Este correo corresponde a una simulación. No se realizó un cobro ni se generó un pedido real.",
-                  "", f"Referencia: {pago_id}", f"Nombre: {nombre}", f"DNI: {dni}", f"Correo: {email}", "", "Productos:"]
-    else:
-        lineas = [f"Hola {nombre}, tu compra fue realizada con éxito.", "",
-                  f"Comprobante de pago: {pago_id}", f"Nombre: {nombre}", f"DNI: {dni}", f"Correo: {email}", "", "Productos:"]
+    lineas = [f"Hola {nombre}, tu compra fue realizada con éxito.", "",
+              f"Comprobante de compra: {pago_id}", f"Nombre: {nombre}", f"DNI: {dni}", f"Correo: {email}", "", "Productos:"]
     lineas.extend(f"- {p['medicamento']} ({p['presentacion']}) en {p['farmacia']}: S/ {p['precio']}" for p in productos)
     lineas.extend(["", f"Dirección: {cliente['direccion']}, {cliente['distrito']}",
                    f"Subtotal: S/ {subtotal:.2f}", f"Delivery: S/ {delivery:.2f}",
-                   f"{'Total simulado' if prueba else 'Total pagado'}: S/ {total:.2f}"])
+                   f"Total: S/ {total:.2f}"])
     if not prueba:
         lineas.extend(["", "Este correo confirma el pago procesado por Mercado Pago."])
     mensaje.set_content("\n".join(lineas))
