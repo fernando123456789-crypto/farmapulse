@@ -202,13 +202,19 @@ def _pagos_configurados():
 
 
 @lru_cache(maxsize=4)
+def _consultar_comercio_de_pruebas(access_token, periodo):
+    respuesta = requests.get("https://api.mercadopago.com/users/me",
+        headers={"Authorization": f"Bearer {access_token}"}, timeout=5)
+    respuesta.raise_for_status()
+    datos = respuesta.json()
+    return (isinstance(datos, dict) and datos.get("site_id") == "MPE"
+            and isinstance(datos.get("tags"), list) and "test_user" in datos["tags"])
+
+
 def _comercio_de_pruebas(access_token):
     try:
-        respuesta = requests.get("https://api.mercadopago.com/users/me",
-            headers={"Authorization": f"Bearer {access_token}"}, timeout=5)
-        respuesta.raise_for_status()
-        datos = respuesta.json()
-        return datos.get("site_id") == "MPE" and "test_user" in datos.get("tags", [])
+        # Revalido en ventanas de un minuto. Un fallo de red no queda en caché.
+        return _consultar_comercio_de_pruebas(access_token, int(time.monotonic() // 60))
     except (requests.RequestException, ValueError, AttributeError, TypeError):
         return False
 
@@ -676,7 +682,7 @@ def api_config():
     return jsonify({
         "ok": True,
         "mercado_pago_public_key": MERCADO_PAGO_PUBLIC_KEY,
-        "pasarela_configurada": _pagos_configurados(),
+        "pasarela_configurada": _pagos_configurados() and _comercio_de_pruebas(MERCADO_PAGO_ACCESS_TOKEN),
         "zona_delivery": ZONA_DELIVERY,
         "tiempo_delivery_minutos": TIEMPO_DELIVERY_MINUTOS,
         "costo_delivery": COSTO_DELIVERY,
@@ -935,6 +941,8 @@ def _datos_cliente_checkout(body: dict) -> dict:
 def api_checkout_orden():
     if not _pagos_configurados():
         return jsonify({"ok": False, "error": "La pasarela o el correo no están configurados"}), 503
+    if not _comercio_de_pruebas(MERCADO_PAGO_ACCESS_TOKEN):
+        return jsonify({"ok": False, "error": "El pago de prueba no está disponible en este momento. No se realizó ningún cobro."}), 503
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         return jsonify({"ok": False, "error": "La solicitud no es válida"}), 400
@@ -988,6 +996,8 @@ def api_checkout_orden():
 def api_checkout_pagar():
     if not _pagos_configurados():
         return jsonify({"ok": False, "error": "La pasarela o el correo no están configurados"}), 503
+    if not _comercio_de_pruebas(MERCADO_PAGO_ACCESS_TOKEN):
+        return jsonify({"ok": False, "error": "El pago de prueba no está disponible en este momento. No se realizó ningún cobro."}), 503
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         return jsonify({"ok": False, "error": "La solicitud no es válida"}), 400
@@ -1032,7 +1042,7 @@ def api_checkout_pagar():
         return jsonify(result), status
     payment_ledger.set_context(orden["id"], {
         "email": email, "cliente": cliente, "productos": productos,
-        "subtotal": str(subtotal), "delivery": str(delivery), "total": str(total),
+        "subtotal": str(subtotal), "delivery": str(delivery), "total": str(total), "modo_prueba": True,
     })
     payload = crear_orden(orden["id"], total, email, cliente, token, method, payment_type, int(installments))
     try:
@@ -1096,7 +1106,7 @@ def _entregar_comprobante(orden_id):
     record = payment_ledger.get(orden_id)
     if payment_ledger.claim_receipt(orden_id):
         context, result = record["context"], record["response"]
-        cliente = {**context["cliente"], "compra_prueba": result["orden_proveedor"].startswith("ORDTST")}
+        cliente = {**context["cliente"], "compra_prueba": context.get("modo_prueba") is True or result["orden_proveedor"].startswith("ORDTST")}
         try:
             _enviar_comprobante(context["email"], cliente["nombre"], cliente["dni"], cliente,
                 context["productos"], Decimal(context["subtotal"]), Decimal(context["delivery"]),

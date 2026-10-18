@@ -17,24 +17,33 @@ class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
     def test_approval_scenario_requires_verified_test_merchant(self):
         with patch.dict(os.environ, {"MERCADO_PAGO_TEST_APPROVAL": "1"}):
             with patch.object(self.module, "_comercio_de_pruebas", return_value=False):
-                self.assertNotIn("nombre_tarjeta_prueba", self.order().json["pagador"])
+                self.assertEqual(self.order().status_code, 503)
             with patch.object(self.module, "_comercio_de_pruebas", return_value=True):
                 data = self.order().json
                 self.assertEqual(data["pagador"]["nombre_tarjeta_prueba"], "APRO-AUTH")
                 self.assertEqual(data["pagador"]["nombre"], self.body["nombres"] + " " + self.body["apellidos"])
 
     def test_test_merchant_detection_is_verified_with_provider(self):
-        self.module._comercio_de_pruebas.cache_clear()
+        verifier = self.real_merchant_verifier
+        self.module._consultar_comercio_de_pruebas.cache_clear()
         with patch.object(self.module.requests, "get") as get:
             get.return_value.json.return_value = {"site_id": "MPE", "tags": ["test_user"]}
-            self.assertTrue(self.module._comercio_de_pruebas("sandbox-token"))
-            self.assertTrue(self.module._comercio_de_pruebas("sandbox-token"))
+            self.assertTrue(verifier("sandbox-token"))
+            self.assertTrue(verifier("sandbox-token"))
             self.assertEqual(get.call_count, 1)
             get.return_value.json.return_value = {"site_id": "MPE", "tags": []}
-            self.assertFalse(self.module._comercio_de_pruebas("production-token"))
-        self.module._comercio_de_pruebas.cache_clear()
+            self.assertFalse(verifier("production-token"))
+            get.return_value.json.return_value = {"site_id": "MPE", "tags": "not_test_user"}
+            self.assertFalse(verifier("malformed-tags"))
+            get.side_effect = self.module.requests.Timeout()
+            self.assertFalse(verifier("unavailable-merchant"))
+            get.side_effect = None
+            get.return_value.json.return_value = {"site_id": "MPE", "tags": ["test_user"]}
+            self.assertTrue(verifier("unavailable-merchant"), "Un fallo de red no debe bloquear las pruebas hasta reiniciar")
+        self.module._consultar_comercio_de_pruebas.cache_clear()
 
     def setUp(self):
+        self.real_merchant_verifier = self.module._comercio_de_pruebas
         super().setUp()
         self.lookup.return_value = {"nombre": "GARCIA LOPEZ JUAN CARLOS"}
         order = self.order()
@@ -62,6 +71,38 @@ class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
         self.assertEqual(order.json["pagador"], {
             "nombre": self.body["nombres"] + " " + self.body["apellidos"], "dni": self.body["dni"],
         })
+
+    def test_live_or_unverifiable_merchant_cannot_create_or_charge_an_order(self):
+        self.test_merchant.return_value = False
+        self.lookup.reset_mock()
+        with patch.object(self.module.payment_ledger, "claim") as claim:
+            for response in (self.order(), self.pay()):
+                self.assertEqual(response.status_code, 503)
+                self.assertFalse(response.json["ok"])
+            claim.assert_not_called()
+        self.lookup.assert_not_called()
+        self.payment.assert_not_called()
+        self.receipt.assert_not_called()
+
+    def test_live_merchant_does_not_enable_card_entry(self):
+        self.test_merchant.return_value = False
+        self.assertFalse(self.client.get("/api/config").json["pasarela_configurada"])
+        self.payment.assert_not_called()
+
+    def test_card_payment_uses_merchant_credentials_without_a_buyer_mp_account(self):
+        self.user["email"] = "cliente-sin-cuenta-mp@example.invalid"
+        order = self.order().json
+        self.approved["external_reference"] = order["orden_id"]
+        self.payment.return_value.json.return_value = deepcopy(self.approved)
+        response = self.pay(orden_firma=order["orden_firma"])
+        self.assertEqual(response.status_code, 200)
+        sent = self.payment.call_args.kwargs
+        self.assertEqual(sent["headers"]["Authorization"], "Bearer TEST-access-prueba")
+        self.assertEqual(set(sent["json"]["payer"]), {"email", "first_name", "last_name", "identification"})
+        self.assertEqual(sent["json"]["payer"]["email"], self.user["email"])
+        self.assertNotIn("redirect_url", response.json)
+        self.assertTrue(self.receipt.call_args.args[3]["compra_prueba"])
+        self.assertTrue(self.module.payment_ledger.get(order["orden_id"])["context"]["modo_prueba"])
 
     def test_approved_payment_and_duplicate_only_charge_once(self):
         self.payment.assert_not_called()

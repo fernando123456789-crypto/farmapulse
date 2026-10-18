@@ -69,6 +69,7 @@ class CheckoutIdentityFixture:
         self.patch(patch.object(m.limiter, "enabled", False))
         self.patch(patch.object(m, "_supabase_configurado", return_value=True))
         self.patch(patch.object(m, "auth_obtener_usuario", side_effect=lambda token: self.user))
+        self.test_merchant = self.patch(patch.object(m, "_comercio_de_pruebas", return_value=True))
         self.patch(patch.object(m, "_datos_checkout", return_value=([], Decimal("10"), Decimal("5"), Decimal("15"))))
         self.lookup = self.patch(patch.object(m, "consultar_dni_reniec", return_value={"nombre": "OTRA IDENTIDAD"}))
         response = Mock(status_code=201)

@@ -35,6 +35,17 @@ const root = { MercadoPago: class {
   getElementById: element,
   createElement(type) { assert.equal(type, "iframe"); return { removed: false, remove() { this.removed = true; } }; },
 } };
+// El cobro con tarjeta debe permanecer en la página, sin Wallet ni login externo.
+const pageLocation = Object.freeze({
+  href: "https://farmapulse.example.invalid/comparador",
+  assign() { assert.fail("El pago con tarjeta no debe redirigir al comprador"); },
+  replace() { assert.fail("El pago con tarjeta no debe redirigir al comprador"); },
+});
+Object.defineProperty(root, "location", {
+  get: () => pageLocation,
+  set() { assert.fail("El pago con tarjeta no debe redirigir al comprador"); },
+});
+root.open = () => assert.fail("El pago con tarjeta no debe abrir un login de Mercado Pago");
 vm.runInNewContext(fs.readFileSync("static/js/mercado-pago.js", "utf8"), { window: root, URL });
 
 (async () => {
