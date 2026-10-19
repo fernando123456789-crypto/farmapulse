@@ -1,5 +1,11 @@
-﻿.env
+# Secretos y entorno local
+.env
+.env.*
+!.env.example
+.venv/
 __pycache__/
 *.pyc
-.venv/
 instance/
+
+# Carpeta duplicada subida por error (app.py viejo y QR de Yape): no volver a versionarla
+/farmapulse/

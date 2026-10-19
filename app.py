@@ -15,8 +15,8 @@ Este servidor expone:
 
 Ejecutar:
     pip install -r requirements.txt
-    playwright install chromium   # una sola vez
     python app.py
+    (Playwright solo lo usa el scraper nocturno: requirements-scraper.txt)
 Luego abrir http://127.0.0.1:5000
 """
 
@@ -26,14 +26,12 @@ import hmac
 import random
 import re
 import smtplib
-import ssl
 import sqlite3
 import time
 import uuid
 import unicodedata
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
-from email.message import EmailMessage
 from functools import wraps, lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -42,6 +40,7 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_talisman import Talisman
@@ -51,6 +50,8 @@ from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 from flask_wtf.csrf import CSRFProtect
 from security import validar_contrasena, validar_email, sanitizar_termino_busqueda
 from identity_security import IdentitySecurity
+from mailer import MailError, correo_configurado, enviar_correo
+from supabase_store import (StoreError, SupabaseIdentitySecurity, SupabasePaymentLedger, SupabaseRest)
 from delivery_location import district_for_point
 from payment_ledger import PaymentLedger
 import admin_panel
@@ -82,22 +83,66 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
 )
-_base_configurada = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+# Render define RENDER_EXTERNAL_URL (https://<servicio>.onrender.com) y RENDER_EXTERNAL_HOSTNAME.
+# APP_BASE_URL manda si existe (por ejemplo, con un dominio propio); si no, uso la URL de Render.
+_base_configurada = (os.getenv("APP_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
 _host_configurado = urlsplit(_base_configurada).hostname if _base_configurada else None
-app.config["TRUSTED_HOSTS"] = ["localhost", "127.0.0.1", "[::1]"] + ([_host_configurado] if _host_configurado else [])
+_hosts_confianza = ["localhost", "127.0.0.1", "[::1]"]
+for _host in (_host_configurado, os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()):
+    if _host and _host not in _hosts_confianza:
+        _hosts_confianza.append(_host)
+app.config["TRUSTED_HOSTS"] = _hosts_confianza
 _produccion = os.getenv("APP_ENV") == "production"
+# Detrás del proxy de Render, la IP real del cliente y el esquema https llegan en X-Forwarded-*.
+# Sin esto, el límite de peticiones contaría a todos los usuarios como una sola IP.
+if os.getenv("RENDER") or os.getenv("TRUST_PROXY") == "1":
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 if _produccion and (len(SECRET_KEY) < 32 or not _base_configurada.startswith("https://")):
     raise ValueError("Producción requiere SECRET_KEY de al menos 32 caracteres y APP_BASE_URL HTTPS")
 _rate_storage = os.getenv("RATELIMIT_STORAGE_URI", "memory://")
 if _produccion and not _rate_storage.startswith(("redis://", "rediss://")):
-    raise ValueError("Producción requiere RATELIMIT_STORAGE_URI con Redis compartido")
-identity_security = IdentitySecurity(
-    os.getenv("IDENTITY_SECURITY_DB") or Path(app.instance_path) / "identity_security.sqlite3",
-    os.getenv("IDENTITY_SECURITY_KEY") or SECRET_KEY,
-)
-payment_ledger = PaymentLedger(
-    os.getenv("PAYMENTS_DB") or Path(app.instance_path) / "payments.sqlite3", SECRET_KEY,
-)
+    # Con UN solo worker de gunicorn la memoria del proceso es correcta (se reinicia al desplegar).
+    # Hay que aceptarlo de forma explícita; con varios workers o instancias hace falta Redis.
+    if os.getenv("RATELIMIT_ALLOW_MEMORY") == "1" and _rate_storage.startswith("memory://"):
+        app.logger.warning("Límite de peticiones en memoria: use un solo worker de gunicorn")
+    else:
+        raise ValueError("Producción requiere RATELIMIT_STORAGE_URI con Redis compartido "
+                         "(o RATELIMIT_ALLOW_MEMORY=1 con un solo worker)")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_ADMIN_KEY = (
+    os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+).strip()
+
+# Almacenamiento de pagos, bloqueos de identidad y sesiones revocadas:
+#   supabase -> tablas fp_* en Postgres (producción; sobrevive a los despliegues de Render Free)
+#   sqlite   -> archivos locales (solo desarrollo y pruebas)
+STORAGE_BACKEND = (os.getenv("STORAGE_BACKEND") or ("supabase" if _produccion else "sqlite")).strip().lower()
+if STORAGE_BACKEND == "supabase":
+    # La clave secreta se usa solo aquí, en el servidor; nunca se envía al navegador.
+    _supabase_rest = SupabaseRest(SUPABASE_URL, SUPABASE_ADMIN_KEY)
+    identity_security = SupabaseIdentitySecurity(_supabase_rest, os.getenv("IDENTITY_SECURITY_KEY") or SECRET_KEY)
+    payment_ledger = SupabasePaymentLedger(_supabase_rest, SECRET_KEY)
+elif STORAGE_BACKEND == "sqlite":
+    if _produccion:
+        raise ValueError("Producción no puede usar SQLite: configura STORAGE_BACKEND=supabase")
+    identity_security = IdentitySecurity(
+        os.getenv("IDENTITY_SECURITY_DB") or Path(app.instance_path) / "identity_security.sqlite3",
+        os.getenv("IDENTITY_SECURITY_KEY") or SECRET_KEY,
+    )
+    payment_ledger = PaymentLedger(
+        os.getenv("PAYMENTS_DB") or Path(app.instance_path) / "payments.sqlite3", SECRET_KEY,
+    )
+else:
+    raise ValueError("STORAGE_BACKEND debe ser 'supabase' o 'sqlite'")
+
+
+@app.errorhandler(StoreError)
+def manejar_error_almacenamiento(error):
+    # Detalle solo en el registro del servidor; el cliente recibe un mensaje genérico.
+    app.logger.error("Almacenamiento en Supabase no disponible: %s", error)
+    return jsonify({"ok": False, "error": "El servicio de registro no está disponible. Intenta nuevamente en unos minutos"}), 503
 
 
 @app.errorhandler(sqlite3.Error)
@@ -135,7 +180,7 @@ limiter = Limiter(
 # =========================================================================
 # Seguridad: Cabeceras HTTP obligatorias contra CSRF, XSS, clickjacking
 # =========================================================================
-Talisman(
+talisman = Talisman(
     app,
     force_https=_produccion,
     frame_options="DENY",
@@ -176,11 +221,6 @@ def proteger_solicitudes_api():
         if not request.is_json and request.endpoint != "api_auth_logout":
             return jsonify({"ok": False, "error": "Envía la solicitud como JSON"}), 415
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_ADMIN_KEY = (
-    os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-).strip()
 RENIEC_TOKEN = os.getenv("RENIEC_TOKEN", "").strip()
 
 MERCADO_PAGO_PUBLIC_KEY = os.getenv("MERCADO_PAGO_PUBLIC_KEY", "").strip()
@@ -192,6 +232,16 @@ MAIL_PORT = int(os.getenv("MAIL_PORT") or "587")
 MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
 MAIL_FROM = (os.getenv("MAIL_FROM") or MAIL_USERNAME).strip()
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "").strip().lower()
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+RESEND_FROM = os.getenv("RESEND_FROM", "").strip()
+
+
+def _config_correo():
+    return {"provider": EMAIL_PROVIDER, "resend_api_key": RESEND_API_KEY, "resend_from": RESEND_FROM,
+            "host": MAIL_HOST, "port": MAIL_PORT, "username": MAIL_USERNAME,
+            "password": MAIL_PASSWORD, "from": MAIL_FROM}
+
 _COTIZACIONES = URLSafeTimedSerializer(os.getenv("SECRET_KEY", ""), salt="farmapulse-cotizaciones")
 _VALIDACION_DIRECCION = URLSafeTimedSerializer(
     os.getenv("SECRET_KEY", ""), salt="farmapulse-direccion-google"
@@ -199,7 +249,7 @@ _VALIDACION_DIRECCION = URLSafeTimedSerializer(
 
 def _pagos_configurados():
     return bool(MERCADO_PAGO_PUBLIC_KEY and MERCADO_PAGO_ACCESS_TOKEN
-                and MAIL_HOST and MAIL_USERNAME and MAIL_PASSWORD and MAIL_FROM)
+                and correo_configurado(_config_correo()))
 
 
 @lru_cache(maxsize=4)
@@ -724,6 +774,14 @@ def api_ubicaciones():
     return jsonify({"ok": True, "data": UBICACIONES_PERU})
 
 
+@app.route("/healthz", methods=["GET"])
+@limiter.exempt
+@talisman(force_https=False)
+def healthz():
+    """Comprobación de salud para Render (Settings -> Health Check Path). No toca la base ni Mercado Pago."""
+    return jsonify({"ok": True}), 200
+
+
 @app.route("/api/config", methods=["GET"])
 def api_config():
     """Config pública para el frontend (pasarela de pago,
@@ -743,11 +801,7 @@ def api_config():
 # Pagos con Mercado Pago y comprobantes por correo
 # ---------------------------------------------------------------------------
 def _enviar_comprobante(email: str, nombre: str, dni: str, cliente: dict, productos: list, subtotal: Decimal, delivery: Decimal, total: Decimal, pago_id: str) -> None:
-    mensaje = EmailMessage()
     prueba = cliente.get("compra_prueba") is True
-    mensaje["Subject"] = f"Comprobante de compra FarmaPulse - {pago_id}"
-    mensaje["From"] = MAIL_FROM
-    mensaje["To"] = email
     if prueba:
         lineas = [f"Hola {nombre}, la simulación de compra en FarmaPulse se completó.", "",
                   "Este correo corresponde a una simulación. No se realizó un cobro ni se generó un pedido real.",
@@ -761,11 +815,8 @@ def _enviar_comprobante(email: str, nombre: str, dni: str, cliente: dict, produc
                    f"{'Total simulado' if prueba else 'Total pagado'}: S/ {total:.2f}"])
     if not prueba:
         lineas.extend(["", "Este correo confirma el pago procesado por Mercado Pago."])
-    mensaje.set_content("\n".join(lineas))
-    with smtplib.SMTP(MAIL_HOST, MAIL_PORT, timeout=15) as servidor:
-        servidor.starttls(context=ssl.create_default_context())
-        servidor.login(MAIL_USERNAME, MAIL_PASSWORD)
-        servidor.send_message(mensaje)
+    enviar_correo(_config_correo(), email, f"Comprobante de compra FarmaPulse - {pago_id}",
+                  "\n".join(lineas), idempotency_key=f"comprobante-{pago_id}")
 
 def _datos_checkout(items: list):
     if not isinstance(items, list) or not items or len(items) > 20:
@@ -1165,7 +1216,7 @@ def _entregar_comprobante(orden_id):
             _enviar_comprobante(context["email"], cliente["nombre"], cliente["dni"], cliente,
                 context["productos"], Decimal(context["subtotal"]), Decimal(context["delivery"]),
                 Decimal(context["total"]), result["pago_id"])
-        except (smtplib.SMTPException, OSError):
+        except (MailError, smtplib.SMTPException, OSError):
             app.logger.warning("No se pudo enviar el comprobante del pago %s", result["pago_id"])
         else:
             result.update(comprobante_enviado=True, mensaje="Tu compra fue realizada con éxito")

@@ -1,51 +1,75 @@
-# Preparo la prueba de pago en Render
+# Despliego FarmaPulse en Render (plan Free)
 
-El profesor no necesita una cuenta de Mercado Pago ni configurar sus credenciales. Abre la URL HTTPS de FarmaPulse, inicia sesión en FarmaPulse, completa su entrega y usa los campos de tarjeta y Pagar. Las credenciales pertenecen al comercio y se configuran una sola vez en el servidor.
+El profesor no necesita una cuenta de Mercado Pago ni configurar sus credenciales. Abre la URL HTTPS de FarmaPulse, inicia sesión, completa su entrega y usa los campos de tarjeta y Pagar. Las credenciales pertenecen al comercio y se configuran una sola vez en el servidor.
 
-## Configuro el servicio
+## Qué cambia en Render Free y cómo lo resuelvo
 
-Conecto Render a la rama `main` del repositorio que contiene esta versión. Para un Web Service Python uso:
+| Limitación de Render Free | Solución en esta versión |
+|---|---|
+| El disco local se borra en cada despliegue | Pagos, bloqueos de identidad y sesiones revocadas viven en Supabase (`sql/05_pagos_y_seguridad.sql`) |
+| Bloquea SMTP (puertos 25, 465 y 587) | `EMAIL_PROVIDER=resend`: el comprobante sale por la API HTTPS de Resend |
+| No incluye Redis | `RATELIMIT_ALLOW_MEMORY=1` con un solo worker (o una instancia de Render Key Value) |
+| Memoria limitada | `requirements.txt` no incluye Playwright ni navegadores; solo los usa el scraper de GitHub Actions |
+
+## 1. Preparo Supabase
+
+1. Supabase → SQL Editor → pego y ejecuto `sql/05_pagos_y_seguridad.sql` (se puede repetir sin problema). Crea `fp_payments`, `fp_identity_attempts` y `fp_revoked_tokens` con RLS activado y sin políticas: el navegador (clave pública) no puede leerlas ni escribirlas.
+2. Supabase → Project Settings → API Keys → copio la clave **secret** (`sb_secret_...`, o `service_role` en proyectos antiguos). Solo va en Render → Environment como `SUPABASE_SECRET_KEY`. Nunca en el navegador, en Git ni en el chat.
+
+## 2. Configuro el servicio
+
+Conecto Render a la rama `main`. Para un Web Service Python:
 
 ```text
 Build Command: python -m pip install -r requirements.txt
 Start Command: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60 app:app
+Health Check Path: /healthz
 ```
 
-En el panel del servicio, Environment, configuro los valores privados; Git y los secretos de GitHub Actions no los transfieren automáticamente a Render:
+El archivo `.python-version` fija Python 3.12 (si no, Render usa el predeterminado según la fecha de creación del servicio). Dejo **un solo worker**: el límite de peticiones en memoria solo es correcto con un proceso.
 
-- `SECRET_KEY`: clave aleatoria, estable y privada de al menos 32 caracteres.
-- `APP_ENV=production`, `APP_BASE_URL=https://mi-servicio.onrender.com` y `RATELIMIT_STORAGE_URI`: Redis privado compartido, según `SEGURIDAD.md`.
-- `SUPABASE_URL` y `SUPABASE_KEY`: proyecto y clave pública de autenticación. Autorizo la URL HTTPS pública de confirmación en Supabase, terminada en `/comparador`.
-- `MERCADO_PAGO_PUBLIC_KEY` y `MERCADO_PAGO_ACCESS_TOKEN`: el par de credenciales de la misma aplicación y comercio de pruebas.
-- `MERCADO_PAGO_TEST_APPROVAL=1`: solo para la evaluación con un comercio de pruebas. La app verifica esa condición con Mercado Pago; no fuerza aprobaciones en un comercio real.
-- `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` y, si necesito un remitente diferente del usuario SMTP, `MAIL_FROM`: correo de comprobantes.
-- `RENIEC_TOKEN`: validación de identidad antes del pago.
-- `MERCADO_PAGO_WEBHOOK_SECRET` y `MERCADO_PAGO_NOTIFICATION_URL=https://mi-servicio.onrender.com/api/pagos/mercadopago/webhook`: notificaciones firmadas de órdenes, configuradas también en Mercado Pago.
+## 3. Variables en Render → Environment
 
-No copio `LOCAL_HTTPS_CERT`, `LOCAL_HTTPS_KEY` ni archivos TLS de mi laptop: Render proporciona HTTPS público. No publico secretos en el repositorio ni los envío al profesor.
+Render define solo `RENDER`, `RENDER_EXTERNAL_URL` y `RENDER_EXTERNAL_HOSTNAME`; la app las usa como URL pública si no pones `APP_BASE_URL`.
 
-Para conservar los pagos, bloqueos y sesiones revocadas de esta implementación, configuro `PAYMENTS_DB` e `IDENTITY_SECURITY_DB` dentro de un disco persistente montado en el servicio, y conservo `SECRET_KEY` e `IDENTITY_SECURITY_KEY`. Por ejemplo, con un disco realmente montado en `/var/data`, uso `/var/data/payments.sqlite3` y `/var/data/identity_security.sqlite3`. Esas rutas por sí solas no crean un disco persistente.
+| Variable | Valor |
+|---|---|
+| `APP_ENV` | `production` |
+| `SECRET_KEY` | aleatoria, privada, estable, de 32+ caracteres (cambiarla vuelve ilegibles los pagos cifrados) |
+| `APP_BASE_URL` | `https://TU-SERVICIO.onrender.com` (opcional en Render; obligatoria con dominio propio) |
+| `STORAGE_BACKEND` | `supabase` |
+| `SUPABASE_URL`, `SUPABASE_KEY` | URL del proyecto y clave pública (publishable/anon) |
+| `SUPABASE_SECRET_KEY` | clave secreta de Supabase (solo servidor) |
+| `RATELIMIT_ALLOW_MEMORY` | `1` (o `RATELIMIT_STORAGE_URI=redis://...` con Render Key Value) |
+| `MERCADO_PAGO_PUBLIC_KEY`, `MERCADO_PAGO_ACCESS_TOKEN` | credenciales de PRUEBA del mismo comercio de pruebas de Perú |
+| `MERCADO_PAGO_TEST_APPROVAL` | `1` (solo con comercio de pruebas) |
+| `MERCADO_PAGO_WEBHOOK_SECRET`, `MERCADO_PAGO_NOTIFICATION_URL` | opcionales; URL `https://TU-SERVICIO.onrender.com/api/pagos/mercadopago/webhook` |
+| `EMAIL_PROVIDER` | `resend` |
+| `RESEND_API_KEY`, `RESEND_FROM` | clave de Resend y remitente, p. ej. `FarmaPulse <onboarding@resend.dev>` |
+| `RENIEC_TOKEN` | token de Decolecta |
+| `ADMIN_EMAIL` | correo del administrador (la contraseña vive solo en Supabase Auth) |
 
-## Configuro el panel de administración (`/admin`)
+Con `onboarding@resend.dev`, Resend solo entrega al correo de tu propia cuenta de Resend: para probar, inicia sesión en FarmaPulse con ese mismo correo. Para enviar a cualquiera, verifica un dominio en Resend y usa un remitente de ese dominio.
 
-1. **Crear la cuenta.** En Supabase → Authentication → Users → *Add user*: correo del administrador, una contraseña nueva y *Auto Confirm User* marcado. (También sirve registrarla desde la aplicación y confirmar el correo: la API solo acepta cuentas con correo confirmado.) La contraseña vive únicamente en Supabase.
-2. **Declarar el rol.** Añado la variable `ADMIN_EMAIL=<correo del administrador>` en el servicio (Render → Environment) y en el `.env` local. Admite varios correos separados por coma. Sin esta variable nadie es administrador y todas las rutas `/api/admin/*` responden 403.
-3. **Reiniciar** el servicio (Render lo hace al guardar variables). No hace falta migrar tablas.
-4. **Persistencia de las compras.** El panel lee `PAYMENTS_DB` (SQLite). En Render debe apuntar a un disco persistente (por ejemplo `/var/data/payments.sqlite3`); en Render Free los archivos locales se borran en cada despliegue y el panel quedaría vacío. Hay que conservar también `SECRET_KEY`: con otra clave los registros ya no se pueden descifrar (el panel avisa de cuántos).
-5. **Uso.** Inicia sesión en la página principal con la cuenta administradora: aparece el enlace «Administración» en el menú. Abre `/admin` desde ese enlace, **en la misma pestaña**: la sesión se guarda en `sessionStorage`, que no se comparte entre pestañas, así que pegar `/admin` en una pestaña nueva pide iniciar sesión otra vez (también se puede hacer desde la propia página del panel).
+No copio `LOCAL_HTTPS_CERT`, `LOCAL_HTTPS_KEY`, `MAIL_*` (solo SMTP local), `PAYMENTS_DB` ni `IDENTITY_SECURITY_DB` (solo SQLite local).
 
-Reglas de cálculo: solo los pagos `approved` cuentan como compras e ingresos; `pending`, `processing`, `unknown` y `rejected` se listan pero no suman. Cada orden es una fila única. El ingreso es el total cobrado (productos + delivery). Cada línea del carrito cuenta como una unidad, porque el sistema no guarda cantidades. Las fechas se interpretan en hora de Lima (UTC-5). El panel no muestra DNI ni dirección. El registro de pagos no contempla reembolsos, así que no aparecen.
+Git y los secretos de GitHub Actions no se transfieren a Render: cada variable se carga en su panel. Las claves del scraper (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) siguen en GitHub → Settings → Secrets and variables → Actions.
 
-## Compruebo las restricciones del plan
+## 4. Configuro el panel de administración (`/admin`)
 
-Render Free bloquea conexiones salientes a los puertos SMTP `25`, `465` y `587`; por tanto, el envío actual mediante Gmail SMTP no funcionará allí aunque las credenciales sean correctas. Además, Free no admite discos persistentes y borra los archivos locales al reiniciar o desplegar.
+1. **Crear la cuenta.** Supabase → Authentication → Users → *Add user*: correo del administrador, contraseña nueva y *Auto Confirm User*.
+2. **Declarar el rol.** `ADMIN_EMAIL=<correo>` en Render → Environment. Sin esta variable nadie es administrador y `/api/admin/*` responde 403.
+3. **Uso.** Inicio sesión en la página principal; aparece «Administración» en el menú. Abro `/admin` desde ese enlace, en la misma pestaña (la sesión vive en `sessionStorage`).
 
-Para evaluar el flujo completo con esta implementación necesito un servicio que permita SMTP y almacenamiento persistente. Si uso Render Free, debo adaptar el correo a un proveedor mediante API HTTPS y sustituir la persistencia local por almacenamiento duradero antes de considerar operativo el flujo completo. Esta adaptación no está incluida en esta guía y no se simula un correo enviado. Consulta las [restricciones oficiales de Render](https://render.com/docs/free#other-limitations) y su [almacenamiento local](https://render.com/docs/free#local-files-lost-on-redeploy).
+El panel lee `fp_payments` en Supabase, así que las compras sobreviven a los despliegues. Reglas de cálculo: solo `approved` suma compras e ingresos; `pending`, `processing`, `unknown` y `rejected` se listan sin sumar; cada orden es una fila única; el ingreso es el total cobrado (productos + delivery); las fechas se muestran en hora de Lima (UTC-5). El panel no muestra DNI ni dirección.
 
-## Verifico antes de entregar el enlace
+## 5. Verifico antes de entregar el enlace
 
-Guardo las variables, despliego la versión actual y reviso los registros del servicio. Compruebo que aparezcan los campos seguros de tarjeta, que un pago de pruebas realmente aprobado genere la compra y que el comprobante llegue al correo de la cuenta de FarmaPulse. Uso tarjetas oficiales de pruebas y verifico también un rechazo; no pruebo con tarjetas reales en la evaluación. No basta con cambiar el texto de un error para habilitar la pasarela.
+1. `https://TU-SERVICIO.onrender.com/healthz` responde `{"ok": true}`.
+2. `https://TU-SERVICIO.onrender.com/api/config` muestra `"pasarela_configurada": true`. Si es `false`: falta una clave de Mercado Pago, falta el correo (`RESEND_API_KEY` y `RESEND_FROM`) o las credenciales no son de un comercio de pruebas de Perú.
+3. Pago de prueba con una tarjeta oficial de pruebas: queda aprobado y se muestra el comprobante.
+4. Supabase → Table Editor → `fp_payments`: aparece la fila con `state = approved` (el campo `context` está cifrado: es lo esperado).
+5. Llega el correo al buzón de la sesión (revisa también spam). Si falla, el pago sigue aprobado y el comprobante queda pendiente: se reintenta con una consulta del estado o con `python -m flask --app app reenviar-comprobantes`.
+6. `/admin` con la cuenta administradora muestra la compra y el ingreso.
 
-La comprobación de configuración en `/api/config` no muestra claves privadas. Si `pasarela_configurada` es falso, todavía falta la configuración de Mercado Pago o correo en ese servidor; el diagnóstico de variables corresponde al administrador, nunca al cliente. La presencia de variables no demuestra por sí sola que sus credenciales sean válidas ni que SMTP sea accesible.
-
-Sin una URL desplegada y acceso al servicio de Render no puedo verificar la instalación remota. El funcionamiento local y las pruebas automáticas no sustituyen esta comprobación.
+Render Free duerme el servicio tras 15 minutos sin tráfico: la primera petición tarda unos segundos en despertar.

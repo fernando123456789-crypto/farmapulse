@@ -1,0 +1,6 @@
+# Dependencias del scraper nocturno (GitHub Actions). La app web NO las necesita:
+# Render instala solo requirements.txt (sin Playwright, navegadores ni cliente supabase-py,
+# porque la app web habla con Supabase por HTTPS con `requests`).
+-r requirements.txt
+supabase==2.33.0
+playwright==1.56.0

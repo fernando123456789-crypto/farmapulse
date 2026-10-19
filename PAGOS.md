@@ -13,12 +13,12 @@ MERCADO_PAGO_PUBLIC_KEY=
 MERCADO_PAGO_ACCESS_TOKEN=
 MERCADO_PAGO_WEBHOOK_SECRET=
 MERCADO_PAGO_NOTIFICATION_URL=https://tu-dominio/api/pagos/mercadopago/webhook
-MAIL_HOST=
-MAIL_PORT=587
-MAIL_USERNAME=
-MAIL_PASSWORD=
-MAIL_FROM=
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=
+RESEND_FROM=
 ```
+
+En Render usa `EMAIL_PROVIDER=resend`: envía por la API HTTPS de Resend, porque Render Free bloquea SMTP. Con `onboarding@resend.dev` como remitente, Resend solo entrega al correo de tu propia cuenta; para otros destinatarios verifica un dominio en Resend. En local puedes conservar SMTP con `EMAIL_PROVIDER=smtp` y `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`.
 
 Para Gmail, configura `smtp.gmail.com:587` con STARTTLS y una contraseña de aplicación de Google como `MAIL_PASSWORD`. Esta credencial pertenece al remitente y permanece en el servidor. El comprobante se dirige al correo de la sesión autenticada después de acreditarse la orden.
 

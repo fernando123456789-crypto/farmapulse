@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Instalo dependencias y el auditor
-        run: python -m pip install -r requirements.txt pip-audit==2.10.1
+        run: python -m pip install -r requirements-scraper.txt pip-audit==2.10.1
       - name: Compruebo backend y controles de acceso
         run: python -m unittest discover -s tests -p 'test_*.py'
       - name: Compruebo tarjeta, checkout, recuperación, cobertura y XSS
@@ -32,4 +32,4 @@ jobs:
           node tests/test_delivery_area.js
           node tests/test_xss.js
       - name: Compruebo vulnerabilidades conocidas
-        run: python -m pip_audit -r requirements.txt
+        run: python -m pip_audit -r requirements-scraper.txt

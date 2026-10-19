@@ -24,7 +24,7 @@ jobs:
           python-version: "3.12"
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-scraper.txt
 
       - name: Instalar navegador de Playwright
         run: python -m playwright install --with-deps chromium

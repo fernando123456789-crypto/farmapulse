@@ -5,7 +5,5 @@ flask-talisman==1.1.0
 cryptography==50.0.2
 redis==8.1.0
 requests==2.34.2
-supabase==2.33.0
 python-dotenv==1.2.2
-playwright==1.56.0
 gunicorn==23.0.0

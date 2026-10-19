@@ -11,14 +11,68 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 
-class PaymentLedger:
-    def __init__(self, path, secret):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+class LedgerBase:
+    """Cifrado del contexto, hashes y fila del panel: compartido por SQLite y Supabase."""
+
+    def __init__(self, secret):
         self.secret = secret.encode()
         self.cipher = Fernet(base64.urlsafe_b64encode(hmac.new(
             self.secret, b"farmapulse-payment-context-v1", hashlib.sha256,
         ).digest()))
+
+    def _encrypt_context(self, order_id, context):
+        envelope = json.dumps({"order_id": order_id, "data": context}).encode()
+        return "fernet:" + self.cipher.encrypt(envelope).decode()
+
+    def _decrypt_context(self, order_id, value):
+        envelope = json.loads(self.cipher.decrypt(value.removeprefix("fernet:").encode()))
+        if envelope["order_id"] != order_id:
+            raise ValueError("El contexto no corresponde a la orden")
+        return envelope["data"]
+
+    def _hash(self, value):
+        return hmac.new(self.secret, value.encode(), hashlib.sha256).hexdigest()
+
+    def _fila_admin(self, order_id, state, encrypted_context, created_at):
+        """Una orden en el formato del panel. No devuelve DNI ni dirección."""
+        legible = True
+        try:
+            context = self._decrypt_context(order_id, encrypted_context) if encrypted_context else {}
+        except Exception:
+            context, legible = {}, False
+        if not isinstance(context, dict):
+            context, legible = {}, False
+        cliente = context.get("cliente") if isinstance(context.get("cliente"), dict) else {}
+        productos = context.get("productos") if isinstance(context.get("productos"), list) else []
+        return {
+            "id": order_id,
+            "created_at": created_at,
+            "estado": state,
+            "legible": legible,
+            "email": str(context.get("email") or ""),
+            "cliente": str(cliente.get("nombre") or ""),
+            # Cada línea del carrito es un empaque: el subtotal es la suma de sus precios
+            # sin multiplicar por cantidad, por eso cada línea cuenta como 1 unidad.
+            "productos": [{
+                "nombre": str(p.get("medicamento") or p.get("nombre") or "Producto"),
+                "presentacion": str(p.get("presentacion") or ""),
+                "farmacia": str(p.get("farmacia") or ""),
+                "cantidad": 1,
+                "precio": str(p.get("precio") or "0"),
+            } for p in productos if isinstance(p, dict)],
+            "subtotal": str(context.get("subtotal") or "0"),
+            "delivery": str(context.get("delivery") or "0"),
+            "total": str(context.get("total") or "0"),
+        }
+
+
+class PaymentLedger(LedgerBase):
+    """Registro en SQLite local. Solo para desarrollo y pruebas: en Render Free se borra."""
+
+    def __init__(self, path, secret):
+        super().__init__(secret)
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("""CREATE TABLE IF NOT EXISTS payments (
                 order_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
@@ -39,19 +93,6 @@ class PaymentLedger:
                 if not context.startswith("fernet:"):
                     db.execute("UPDATE payments SET context = ? WHERE order_id = ?",
                                (self._encrypt_context(order_id, json.loads(context)), order_id))
-
-    def _encrypt_context(self, order_id, context):
-        envelope = json.dumps({"order_id": order_id, "data": context}).encode()
-        return "fernet:" + self.cipher.encrypt(envelope).decode()
-
-    def _decrypt_context(self, order_id, value):
-        envelope = json.loads(self.cipher.decrypt(value.removeprefix("fernet:").encode()))
-        if envelope["order_id"] != order_id:
-            raise ValueError("El contexto no corresponde a la orden")
-        return envelope["data"]
-
-    def _hash(self, value):
-        return hmac.new(self.secret, value.encode(), hashlib.sha256).hexdigest()
 
     def claim(self, order_id, token, device, owner):
         token_hash, device_hash = self._hash(token), self._hash(device)
@@ -143,38 +184,7 @@ class PaymentLedger:
         sql += " ORDER BY created_at DESC, rowid DESC"
         with closing(sqlite3.connect(self.path, timeout=10)) as db:
             rows = db.execute(sql, parametros).fetchall()
-        resultado = []
-        for order_id, state, encrypted_context, created_at in rows:
-            legible = True
-            try:
-                context = self._decrypt_context(order_id, encrypted_context) if encrypted_context else {}
-            except Exception:
-                context, legible = {}, False
-            if not isinstance(context, dict):
-                context, legible = {}, False
-            cliente = context.get("cliente") if isinstance(context.get("cliente"), dict) else {}
-            productos = context.get("productos") if isinstance(context.get("productos"), list) else []
-            resultado.append({
-                "id": order_id,
-                "created_at": created_at,
-                "estado": state,
-                "legible": legible,
-                "email": str(context.get("email") or ""),
-                "cliente": str(cliente.get("nombre") or ""),
-                # Cada línea del carrito es un empaque: el subtotal es la suma de sus precios
-                # sin multiplicar por cantidad, por eso cada línea cuenta como 1 unidad.
-                "productos": [{
-                    "nombre": str(p.get("medicamento") or p.get("nombre") or "Producto"),
-                    "presentacion": str(p.get("presentacion") or ""),
-                    "farmacia": str(p.get("farmacia") or ""),
-                    "cantidad": 1,
-                    "precio": str(p.get("precio") or "0"),
-                } for p in productos if isinstance(p, dict)],
-                "subtotal": str(context.get("subtotal") or "0"),
-                "delivery": str(context.get("delivery") or "0"),
-                "total": str(context.get("total") or "0"),
-            })
-        return resultado
+        return [self._fila_admin(*row) for row in rows]
 
     def pending_receipts(self):
         with closing(sqlite3.connect(self.path, timeout=10)) as db:
