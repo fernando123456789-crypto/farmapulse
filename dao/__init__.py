@@ -1,0 +1,1 @@
+"""Data access objects for FarmaPulse."""

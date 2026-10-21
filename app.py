@@ -18,6 +18,7 @@ Ejecutar:
     python app.py
     (Playwright solo lo usa el scraper nocturno: requirements-scraper.txt)
 Luego abrir http://127.0.0.1:5000
+
 """
 
 import os
@@ -46,6 +47,7 @@ from flask_limiter.util import get_remote_address
 from flask_talisman import Talisman
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
+from dao.receta_dao import RecetaDAO, RecetaDAOError
 from scrapers.registry import buscar_en_farmacias, nombres_farmacias_activas
 from flask_wtf.csrf import CSRFProtect
 from security import validar_contrasena, validar_email, sanitizar_termino_busqueda
@@ -285,6 +287,7 @@ _MEMORIA_RECETAS = []
 # petición lleva su propio token: es el patrón correcto para un backend
 # multiusuario.
 AUTH_TIMEOUT = 8
+receta_dao = RecetaDAO(SUPABASE_URL, SUPABASE_KEY, _MEMORIA_RECETAS, timeout=AUTH_TIMEOUT)
 
 
 class AuthEmailError(ValueError):
@@ -1636,21 +1639,13 @@ def api_receta_guardar():
         "creado_en": datetime.now(timezone.utc).isoformat(),
     }
 
-    if _supabase_configurado():
-        try:
-            resultado = requests.post(
-                f"{SUPABASE_URL.rstrip('/')}/rest/v1/listas_recetas",
-                headers={**_auth_headers(request.headers["Authorization"].removeprefix("Bearer ").strip()),
-                         "Prefer": "return=representation"}, json=registro, timeout=AUTH_TIMEOUT,
-            )
-            resultado.raise_for_status()
-            return jsonify({"ok": True, "fuente": "supabase", "data": resultado.json()})
-        except (requests.RequestException, ValueError):
-            app.logger.warning("No se pudo guardar la receta con la sesión del usuario")
-            return jsonify({"ok": False, "error": "No se pudo guardar la receta. Intenta nuevamente."}), 502
-
-    _MEMORIA_RECETAS.append(registro)
-    return jsonify({"ok": True, "fuente": "memoria_local", "data": registro})
+    token = request.headers["Authorization"].removeprefix("Bearer ").strip() if _supabase_configurado() else None
+    try:
+        fuente, data = receta_dao.guardar(registro, token)
+    except RecetaDAOError:
+        app.logger.warning("No se pudo guardar la receta con la sesión del usuario")
+        return jsonify({"ok": False, "error": "No se pudo guardar la receta. Intenta nuevamente."}), 502
+    return jsonify({"ok": True, "fuente": fuente, "data": data})
 
 
 @app.route("/api/receta/historial", methods=["GET"])
@@ -1659,24 +1654,13 @@ def api_receta_historial():
     """Historial de "Mi Receta": ahora requiere sesión iniciada."""
     usuario_id = g.usuario["id"]
 
-    if _supabase_configurado():
-        try:
-            resultado = requests.get(
-                f"{SUPABASE_URL.rstrip('/')}/rest/v1/listas_recetas",
-                headers=_auth_headers(request.headers["Authorization"].removeprefix("Bearer ").strip()),
-                params={"select": "*", "usuario_id": f"eq.{usuario_id}", "order": "creado_en.desc", "limit": "100"},
-                timeout=AUTH_TIMEOUT,
-            )
-            resultado.raise_for_status()
-            return jsonify({"ok": True, "fuente": "supabase", "data": resultado.json()})
-        except (requests.RequestException, ValueError):
-            app.logger.warning("No se pudo consultar el historial con la sesión del usuario")
-            return jsonify({"ok": False, "error": "No se pudo consultar el historial. Intenta nuevamente."}), 502
-
-    historial_local = [
-        r for r in _MEMORIA_RECETAS if r["usuario_id"] == usuario_id
-    ]
-    return jsonify({"ok": True, "fuente": "memoria_local", "data": historial_local})
+    token = request.headers["Authorization"].removeprefix("Bearer ").strip() if _supabase_configurado() else None
+    try:
+        fuente, data = receta_dao.listar_por_usuario(usuario_id, token)
+    except RecetaDAOError:
+        app.logger.warning("No se pudo consultar el historial con la sesión del usuario")
+        return jsonify({"ok": False, "error": "No se pudo consultar el historial. Intenta nuevamente."}), 502
+    return jsonify({"ok": True, "fuente": fuente, "data": data})
 
 
 # ---------------------------------------------------------------------------
