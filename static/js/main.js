@@ -592,12 +592,6 @@
     } else {
       agregarAlCarrito(item);
     }
-    // Refresca este botón puntual sin tener que re-renderizar toda la tabla.
-    btn.outerHTML = botonCarritoHtml(item);
-    const nuevoBtn = tablaResultados.querySelector(
-      `[data-medicamento="${CSS.escape(item.medicamento)}"][data-farmacia="${CSS.escape(item.farmacia)}"]`
-    );
-    if (nuevoBtn) nuevoBtn.addEventListener("click", () => alternarCarritoDesdeBoton(nuevoBtn));
   }
 
   // Tras una nueva búsqueda, o al agregar/quitar desde la tarjeta del
