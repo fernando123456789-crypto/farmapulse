@@ -1,0 +1,10 @@
+# Excluyo entornos, credenciales y resultados locales.
+.venv/
+__pycache__/
+*.pyc
+.artifacts/
+.env*
+!.env.selenium.example
+!.env.pruebas.example
+*.sqlite3
+*.sqlite3-*

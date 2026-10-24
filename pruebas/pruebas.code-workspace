@@ -1,0 +1,13 @@
+{
+  "folders": [{ "name": "Pruebas de FarmaPulse", "path": "." }],
+  "settings": {
+    "python.testing.unittestEnabled": true,
+    "python.testing.pytestEnabled": false,
+    "python.envFile": "${workspaceFolder}/.env.pruebas",
+    "python.testing.cwd": "${workspaceFolder}",
+    "python.testing.unittestArgs": ["-v", "-s", "backend", "-t", "..", "-p", "test_*.py"],
+    "nodejs-testing.include": ["frontend"],
+    "nodejs-testing.extensions": [{ "extensions": ["js"], "parameters": [], "filePatterns": ["**/test_*.js"] }]
+  },
+  "extensions": { "recommendations": ["ms-python.python", "connor4312.nodejs-testing"] }
+}
