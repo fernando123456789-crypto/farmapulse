@@ -27,6 +27,23 @@ La reserva de la orden impide cobros simultáneos duplicados y la transición a 
 
 Sin credenciales y correo configurados, el checkout no realiza cobros. Las pruebas automáticas simulan respuestas de Mercado Pago; las aprobaciones, rechazos, autenticación bancaria y notificaciones reales requieren validar la aplicación con las credenciales del comercio.
 
+## Validación de DNI
+
+La consulta de identidad se realiza desde `consultar_dni_reniec` en `app.py`,
+mediante el proveedor **Decolecta**. Se configura `RENIEC_TOKEN` en el entorno del
+servidor; no se envía ese token al navegador ni se incluye su valor en Git.
+
+La validación se ejecuta al preparar `/api/checkout/orden`, después de comprobar
+la sesión, la entrega y la cotización, y antes de tokenizar la tarjeta. Exige un
+DNI de ocho dígitos, comprueba que el documento devuelto sea el consultado y
+compara los nombres y apellidos normalizados. No se consulta el proveedor por
+cada tecla ni al abrir el formulario de pago.
+
+Sin `RENIEC_TOKEN`, la preparación de la orden responde 503. Una consulta agotada
+responde 504 y otros errores del proveedor responden 502; esos errores no consumen
+intentos de identidad. Un DNI inexistente o nombres que no coinciden sí consumen
+un intento, conforme a las reglas siguientes.
+
 ## Intentos de identidad
 
 Se permiten hasta cinco fallos acumulados por cuenta, correo o DNI. Un DNI inexistente o nombres que no coinciden consumen un intento; errores de red, fallos del proveedor y datos incompletos no lo consumen. Una validación correcta no reinicia el contador.
