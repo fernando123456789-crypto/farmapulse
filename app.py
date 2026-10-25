@@ -789,7 +789,7 @@ def api_ubicaciones():
 @talisman(force_https=False)
 def healthz():
     """Comprobación de salud para Render (Settings -> Health Check Path). No toca la base ni Mercado Pago."""
-    return jsonify({"ok": True}), 200
+    return jsonify({"ok": True, "commit": os.getenv("RENDER_GIT_COMMIT", "")[:7]}), 200
 
 
 @app.route("/api/config", methods=["GET"])
