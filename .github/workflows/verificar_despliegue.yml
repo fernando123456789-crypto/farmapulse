@@ -1,0 +1,50 @@
+name: Verificar despliegue y rendimiento
+# Se ejecuta solo, después de que pasan las pruebas en main. No hay pasos manuales.
+on:
+  workflow_run:
+    workflows: ["Compruebo seguridad y regresiones"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+env:
+  URL: https://farmapulse.onrender.com
+permissions:
+  contents: read
+jobs:
+  verificar:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Espero a que Render sirva este commit
+        if: github.event_name == 'workflow_run'
+        run: |
+          SHORT="$(echo '${{ github.event.workflow_run.head_sha }}' | cut -c1-7)"
+          for i in $(seq 1 60); do
+            R="$(curl -s --max-time 60 "$URL/healthz" || true)"
+            echo "intento $i: $R"
+            if echo "$R" | grep -q "\"commit\": *\"$SHORT"; then
+              echo "Render ya sirve el commit $SHORT" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Render no sirvió el commit $SHORT a tiempo"
+          exit 1
+      - name: Mido el rendimiento en producción
+        continue-on-error: true
+        run: python scripts/prueba_rendimiento.py --base-url "$URL" --out informe_rendimiento.md
+      - name: Publico el informe en el resumen
+        if: always()
+        run: cat informe_rendimiento.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Guardo el informe como evidencia
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: informe-rendimiento
+          path: informe_rendimiento.*

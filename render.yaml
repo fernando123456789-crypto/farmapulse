@@ -1,0 +1,43 @@
+# Blueprint de Render: define el servicio como código para no configurarlo a mano.
+# Render → New → Blueprint → elegir este repositorio. Los secretos (sync: false) se cargan una sola vez.
+services:
+  - type: web
+    name: farmapulse
+    runtime: python
+    plan: free
+    branch: main
+    # Despliega automáticamente SOLO cuando pasan las comprobaciones de GitHub Actions
+    # (workflow "Compruebo seguridad y regresiones"). Un push con pruebas fallidas no llega a producción.
+    autoDeployTrigger: checksPass
+    buildCommand: python -m pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60 app:app
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: RATELIMIT_ALLOW_MEMORY
+        value: "1"
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: SECRET_KEY
+        generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: MERCADO_PAGO_PUBLIC_KEY
+        sync: false
+      - key: MERCADO_PAGO_ACCESS_TOKEN
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        sync: false
+      - key: RENIEC_TOKEN
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
