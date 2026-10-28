@@ -1,37 +1,45 @@
-# Pruebas funcionales de FarmaPulse
+# Test Suite automatizado con Selenium
 
-Uso Selenium con Python y `unittest` para comprobar la aplicación publicada en
-https://farmapulse.onrender.com. Los casos están separados de las páginas y sus
-identificadores. Cada prueba abre Chrome y lo cierra al terminar, incluso si falla.
+Desarrollé esta suite para comprobar las funciones de
+[FarmaPulse en Render](https://farmapulse.onrender.com/comparador) mediante
+Selenium, Python y `unittest`. Organicé los identificadores y las acciones de
+cada página por separado de los casos de prueba.
 
-Abro esta carpeta en VS Code, elijo el intérprete configurado en `.vscode` y uso
-el panel **Pruebas** para descubrir y ejecutar los casos. El caso de inicio de
-sesión utiliza las variables locales `SELENIUM_USER_EMAIL` y
-`SELENIUM_USER_PASSWORD`, guardadas en `.env.selenium` dentro de esta carpeta.
-El archivo está excluido de Git. Si no están disponibles, el caso se omite.
+## Casos que ejecuto
 
-## Relación inicial con los requisitos
+1. **RF01 — Búsqueda y filtrado:** compruebo la búsqueda de Paracetamol y los
+   filtros por Mifarma y Farmacias del Peru.
+2. **RF02 — Comparación de precios:** verifico el orden ascendente de los
+   precios unitarios mostrados.
+3. **RF03 — Captura automatizada:** identifico como pendiente la verificación
+   de la ejecución programada en GitHub Actions.
+4. **RF04 — Persistencia del catálogo:** identifico como pendiente la
+   comprobación de los datos en PostgreSQL.
+5. **RF05 — Carrito y entrega:** agrego y retiro un producto; también
+   compruebo los distritos y la dirección de despacho.
+6. **RF06 — Registro e inicio de sesión:** verifico el rechazo de contraseñas
+   inválidas y el acceso con una cuenta de prueba.
 
-- **RF01:** búsqueda por término y filtro por farmacia. Categoría terapéutica,
-  rango de precio y la distinción entre nombre comercial y principio activo aún
-  requieren comprobación específica; no se consideran cubiertos por estos casos.
-- **RF02:** compruebo que los precios visibles estén ordenados. Quedan por
-  comprobar la equivalencia del producto entre farmacias y la actualidad de los
-  datos; el orden por sí solo no los acredita.
-- **RF03:** la ejecución programada de GitHub Actions requiere evidencia del
-  flujo y sus ejecuciones; Selenium sobre la interfaz no la acredita.
-- **RF04:** la persistencia y actualización en PostgreSQL requieren pruebas y
-  evidencia de la base de datos; Selenium sobre la interfaz no las acredita.
-- **RF05:** agrego y retiro un producto y compruebo que el checkout muestre
-  distritos y dirección de despacho. La disponibilidad de opciones por producto
-  todavía requiere una comprobación específica.
-- **RF06:** compruebo el rechazo de una clave inválida y el inicio de sesión con
-  la cuenta de prueba. El registro exitoso todavía requiere un caso y datos
-  adecuados para comprobarlo.
+La suite contiene **nueve casos de interfaz**. Mantengo RF03 y RF04 como
+pendientes porque necesitan evidencia adicional de los procesos internos.
+En el filtro de Farmacias del Peru he observado datos de demostración; la
+prueba comprueba la tabla sin acreditar disponibilidad ni precios reales.
 
-Un resultado verde acredita únicamente las comprobaciones del caso ejecutado.
+## Cómo ejecuto las pruebas
 
-Para preparar el entorno en Windows, ejecuto `python -m venv .venv` y
-`.venv\Scripts\python.exe -m pip install -r requirements.txt`. Copio
-`.env.selenium.example` a `.env.selenium` y configuro mi cuenta de prueba
-localmente antes de ejecutar los casos que requieren sesión.
+1. Abro esta carpeta en VS Code y selecciono un intérprete de Python con
+   Selenium instalado. Para crear el entorno en Windows, ejecuto:
+
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   ```
+
+2. Configuro `SELENIUM_USER_EMAIL` y `SELENIUM_USER_PASSWORD` en el archivo
+   local `.env.selenium`. Mantengo este archivo fuera de Git. En una copia del
+   repositorio puedo crear el archivo a partir de `.env.selenium.example`.
+3. Abro el panel **Pruebas** y ejecuto el caso deseado o toda la suite. Si no
+   configuro la cuenta, los casos que la necesitan se marcan como omitidos.
+
+En [PLAN_PRUEBAS.md](PLAN_PRUEBAS.md) relaciono los casos con cada requisito y
+detallo su alcance. Compruebo cada resultado en la ejecución correspondiente.
