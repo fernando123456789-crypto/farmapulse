@@ -46,35 +46,35 @@
   <section class="bg-white rounded-2xl shadow-xl border border-slate-100 p-6 md:p-8">
     <div class="grid md:grid-cols-3 gap-5">
       <div class="md:col-span-3">
-        <label class="block text-sm font-semibold text-slate-600 mb-1">Medicamento o principio activo</label>
+        <label for="inputProducto" class="block text-sm font-semibold text-slate-600 mb-1">Medicamento o principio activo</label>
         <div class="relative">
-          <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
+          <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" aria-hidden="true"></i>
           <input id="inputProducto" type="text" placeholder="Ej. Ibuprofeno, Panadol, Paracetamol..."
                  class="w-full border border-slate-200 rounded-xl pl-11 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40 focus:border-fpGreen">
         </div>
       </div>
 
       <div>
-        <label class="block text-sm font-semibold text-slate-600 mb-1">Departamento</label>
+        <label for="selectDepartamento" class="block text-sm font-semibold text-slate-600 mb-1">Departamento</label>
         <select id="selectDepartamento" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40">
           <option value="">-- Seleccione --</option>
         </select>
       </div>
       <div>
-        <label class="block text-sm font-semibold text-slate-600 mb-1">Provincia</label>
+        <label for="selectProvincia" class="block text-sm font-semibold text-slate-600 mb-1">Provincia</label>
         <select id="selectProvincia" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40" disabled>
           <option value="">-- Seleccione --</option>
         </select>
       </div>
       <div>
-        <label class="block text-sm font-semibold text-slate-600 mb-1">Distrito</label>
+        <label for="selectDistrito" class="block text-sm font-semibold text-slate-600 mb-1">Distrito</label>
         <select id="selectDistrito" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40" disabled>
           <option value="">-- Seleccione --</option>
         </select>
       </div>
 
       <div class="md:col-span-2">
-        <label class="block text-sm font-semibold text-slate-600 mb-1">Por Farmacia/Botica <span class="text-slate-400 font-normal">(opcional)</span></label>
+        <label for="inputFarmacia" class="block text-sm font-semibold text-slate-600 mb-1">Por Farmacia/Botica <span class="text-slate-600 font-normal">(opcional)</span></label>
         <input id="inputFarmacia" type="text" placeholder="Ej. Inkafarma"
                class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fpGreen/40">
       </div>
@@ -82,7 +82,7 @@
 
     <div class="flex flex-col sm:flex-row gap-3 mt-6">
       <button id="btnBuscar"
-              class="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-8 py-3 shadow-lg shadow-fpGreen/20">
+              class="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 bg-fpGreenBtn hover:bg-fpGreenBtnDark transition text-white font-semibold rounded-xl px-8 py-3 shadow-lg shadow-fpGreen/20">
         <i class="fa-solid fa-magnifying-glass"></i> Buscar
       </button>
       <button id="btnLimpiar"
@@ -126,7 +126,7 @@
         </thead>
         <tbody id="tablaResultados" class="divide-y divide-slate-100">
           <tr>
-            <td colspan="7" class="text-center text-slate-400 py-14">
+            <td colspan="7" class="text-center text-slate-600 py-14">
               <i class="fa-solid fa-pills text-3xl mb-3 block"></i>
               Realiza una búsqueda para comparar precios entre farmacias.
             </td>
@@ -141,20 +141,20 @@
     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
       <h2 class="font-bold text-lg text-fpDark flex items-center gap-2">
         <i class="fa-solid fa-cart-shopping text-fpGreen"></i> Mi Carrito
-        <span id="carritoContador" class="hidden text-xs font-bold bg-fpGreen text-white rounded-full px-2 py-0.5">0</span>
+        <span id="carritoContador" class="hidden text-xs font-bold bg-fpGreenBtn text-white rounded-full px-2 py-0.5">0</span>
       </h2>
       <div class="flex items-center gap-4">
         <p class="text-slate-600 text-sm">
           Total: <span id="carritoTotalMini" class="precio-destacado text-base">S/ 0.00</span>
         </p>
         <button id="btnComprar" disabled
-                class="hidden inline-flex items-center justify-center gap-2 bg-fpGreen hover:bg-fpGreenDark transition text-white font-semibold rounded-xl px-6 py-2.5 shadow-lg shadow-fpGreen/20 disabled:opacity-50">
+                class="hidden inline-flex items-center justify-center gap-2 bg-fpGreenBtn hover:bg-fpGreenBtnDark transition text-white font-semibold rounded-xl px-6 py-2.5 shadow-lg shadow-fpGreen/20 disabled:opacity-50">
           <i class="fa-solid fa-bag-shopping"></i> Comprar
         </button>
       </div>
     </div>
     <div id="miCarrito" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      <p class="text-slate-400 text-sm col-span-full">Aún no has agregado productos a tu carrito.</p>
+      <p class="text-slate-600 text-sm col-span-full">Aún no has agregado productos a tu carrito.</p>
     </div>
   </section>
 

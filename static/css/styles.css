@@ -35,7 +35,7 @@ body {
   align-items: center;
   gap: 4px;
   background-color: #e7f6ef;
-  color: #158a5a;
+  color: #138055;
   font-weight: 700;
   font-size: 0.7rem;
   letter-spacing: 0.03em;
@@ -60,7 +60,7 @@ body {
 
 /* ---------- Precio destacado ---------- */
 .precio-destacado {
-  color: #158a5a;
+  color: #138055;
   font-weight: 800;
 }
 
@@ -104,7 +104,7 @@ body {
   color: #fff;
 }
 .btn-comprar:hover {
-  background-color: #158a5a;
+  background-color: #138055;
 }
 
 .btn-quitar {
