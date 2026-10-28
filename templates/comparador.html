@@ -166,11 +166,11 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script defer src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
-<script defer src="{{ url_for('static', filename='js/delivery-area.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='js/delivery-area.js') }}"></script>
 <!-- Datos de ubicaciones desde Flask (bloque JSON: no es script ejecutable, cumple la CSP) -->
 <script type="application/json" id="ubicaciones-data">{{ ubicaciones | tojson }}</script>
-<script defer src="{{ url_for('static', filename='js/ubicaciones.js') }}"></script>
-<script defer src="https://sdk.mercadopago.com/js/v2"></script>
-<script defer src="{{ url_for('static', filename='js/mercado-pago.js', v='20261016-pago-directo') }}"></script>
+<script src="{{ url_for('static', filename='js/ubicaciones.js') }}"></script>
+<script src="https://sdk.mercadopago.com/js/v2"></script>
+<script src="{{ url_for('static', filename='js/mercado-pago.js', v='20261016-pago-directo') }}"></script>
 {% endblock %}
