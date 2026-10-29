@@ -1,0 +1,7 @@
+{
+  "proyecto": "gxknyrzcvgddxzfhqyzg",
+  "fecha_local": "2026-10-28",
+  "operacion": "Consulta de conteos de solo lectura mediante la conexión de Supabase",
+  "conteos": {"listas_recetas": 237, "precios": 32861, "scrapes_log": 2664},
+  "alcance": "Fotografía de la consulta; no equivale a una prueba de escritura o de carga"
+}

@@ -1,0 +1,5 @@
+.env.interoperabilidad
+preparar_local.py
+__pycache__/
+.venv/
+resultados/
