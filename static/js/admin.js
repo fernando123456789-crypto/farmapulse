@@ -3,6 +3,19 @@
    Este archivo solo muestra lo que el servidor decide devolver. Sin HTML dinámico: todo con textContent. */
 (function () {
   "use strict";
+  let chartPromesa = null;
+  function cargarChart() {
+    if (typeof Chart !== "undefined") return Promise.resolve();
+    if (!chartPromesa) {
+      chartPromesa = new Promise((ok, fallo) => {
+        const s = document.createElement("script");
+        s.src = "/static/vendor/chartjs/chart.umd.js";
+        s.onload = ok; s.onerror = fallo;
+        document.head.appendChild(s);
+      });
+    }
+    return chartPromesa;
+  }
   document.addEventListener("DOMContentLoaded", () => {
     const $ = (id) => document.getElementById(id);
     const ESTADOS = { approved: "Aprobado", pending: "Pendiente", processing: "Procesando", unknown: "Sin confirmar", rejected: "Rechazado" };
@@ -92,11 +105,11 @@
       tabla(d);
     }
 
-    function graficos(d) {
+    async function graficos(d) {
       const hayTiempo = d.serie.some((s) => s.compras > 0);
       $("admVacioTiempo").hidden = hayTiempo; $("admGraficoTiempo").parentElement.hidden = !hayTiempo;
       $("admVacioProductos").hidden = d.top_productos.length > 0; $("admGraficoProductos").parentElement.hidden = !d.top_productos.length;
-      if (typeof Chart === "undefined") return;
+      try { await cargarChart(); } catch { return; }
       graficoTiempo?.destroy(); graficoProductos?.destroy(); graficoTiempo = graficoProductos = null;
       if (hayTiempo) {
         graficoTiempo = new Chart($("admGraficoTiempo"), {

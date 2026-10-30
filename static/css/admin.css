@@ -53,3 +53,7 @@
 #admBuscar{min-width:260px}
 @media(max-width:900px){.adm-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.adm-grid{grid-template-columns:1fr}}
 @media(max-width:480px){.adm{padding:20px 12px}.adm-card{padding:15px}.adm-stat-value{font-size:1.3rem}.adm-filters>*{flex:1 1 100%}}
+.adm{min-height:72vh}
+.adm-gate{min-height:230px}
+.adm-chart canvas{max-width:100%}
+.adm-table-wrap{min-height:120px}

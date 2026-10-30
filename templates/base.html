@@ -6,19 +6,24 @@
 <title>{% block title %}FarmaPulse - Tu Red Compartida para Medicamentos de Confianza{% endblock %}</title>
 <meta name="description" content="FarmaPulse: compara precios de medicamentos en farmacias del Perú y ahorra en tus tratamientos.">
 
-<!-- Tailwind CSS (compilado localmente, sin CDN) -->
-<link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}">
-
-<!-- FontAwesome (CDN) -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-
-<!-- Google Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
-<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css', v='20261029') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css', v='20261029') }}">
+
+<!-- FontAwesome y Poppins: sin bloquear el render -->
+<link rel="stylesheet" data-async-css media="print" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<link rel="stylesheet" data-async-css media="print" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap">
+<noscript>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap">
+</noscript>
+<script src="{{ url_for('static', filename='js/css-async.js', v='20261029') }}" defer></script>
+
 {% block extra_head %}{% endblock %}
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7340130250145287" crossorigin="anonymous"></script>
+{% block ads %}<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7340130250145287" crossorigin="anonymous"></script>{% endblock %}
 </head>
 <body class="font-[Poppins] bg-white text-slate-800">
 
@@ -43,7 +48,7 @@
 {% include "_auth_modales.html" %}
 
 {% block extra_scripts %}{% endblock %}
-<script src="{{ url_for('static', filename='js/auth.js', v='20261016-seguridad') }}"></script>
-<script src="{{ url_for('static', filename='js/main.js', v='20261018-checkout-cierra-al-pagar') }}"></script>
+<script src="{{ url_for('static', filename='js/auth.js', v='20261016-seguridad') }}" defer></script>
+<script src="{{ url_for('static', filename='js/main.js', v='20261018-checkout-cierra-al-pagar') }}" defer></script>
 </body>
 </html>

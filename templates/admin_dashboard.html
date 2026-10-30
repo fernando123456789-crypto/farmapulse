@@ -2,9 +2,9 @@
 {% block title %}Panel de administración | FarmaPulse{% endblock %}
 {% block extra_head %}
 <meta name="robots" content="noindex, nofollow">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css', v='20261017-admin') }}">
-<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.js') }}" defer></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css', v='20261029-admin') }}">
 {% endblock %}
+{% block ads %}{% endblock %}
 {% block content %}
 <header class="bg-fpDark">
   <nav class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-y-3">
@@ -21,7 +21,7 @@
 </header>
 
 <main class="adm" id="admRaiz">
-  <section id="admPuerta" class="adm-card adm-gate" hidden>
+  <section id="admPuerta" class="adm-card adm-gate">
     <div class="adm-gate-icon"><i class="fa-solid fa-shield-halved"></i></div>
     <h2 id="admPuertaTitulo">Verificando acceso…</h2>
     <p class="adm-sub" id="admPuertaTexto"></p>
@@ -123,5 +123,5 @@
 </main>
 {% endblock %}
 {% block extra_scripts %}
-<script src="{{ url_for('static', filename='js/admin.js', v='20261017-admin') }}"></script>
+<script src="{{ url_for('static', filename='js/admin.js', v='20261029-admin') }}" defer></script>
 {% endblock %}

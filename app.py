@@ -1693,6 +1693,11 @@ def add_security_headers(response):
     if request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
+    if request.path.startswith("/static/") and response.status_code == 200:
+        if request.path.startswith("/static/vendor/"):
+            response.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+        else:
+            response.headers["Cache-Control"] = "public, max-age=604800"
     return response
     
 # ---------------------------------------------------------------------------
