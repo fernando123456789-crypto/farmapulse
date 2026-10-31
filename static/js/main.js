@@ -680,12 +680,23 @@
   // -------------------------------------------------------
   // Llamada a la API /api/buscar
   // -------------------------------------------------------
+  function mostrarAvisoBusqueda(mensaje) {
+    renderizarResultados([]);
+    tablaResultados.querySelector("td").textContent = mensaje;
+  }
+
   async function buscarMedicamentos() {
-    loadingState.classList.remove("hidden");
+    const termino = inputProducto.value.trim();
     panelAhorro.classList.add("hidden");
+    if (termino.length < 2) {
+      mostrarAvisoBusqueda("Escribe al menos 2 caracteres del medicamento o principio activo.");
+      inputProducto.focus();
+      return;
+    }
+    loadingState.classList.remove("hidden");
 
     const payload = {
-      producto: inputProducto.value.trim(),
+      producto: termino,
       departamento: selectDepartamento.value,
       provincia: selectProvincia.value,
       distrito: selectDistrito.value,
@@ -699,9 +710,14 @@
         body: JSON.stringify(payload),
       });
 
-      if (!respuesta.ok) throw new Error("Error de red al consultar /api/buscar");
-
       const data = await respuesta.json();
+      if (!respuesta.ok) {
+        if (respuesta.status === 400) {
+          mostrarAvisoBusqueda(data.error || "Revisa el medicamento y los filtros de búsqueda.");
+          return;
+        }
+        throw new Error("Error de red al consultar /api/buscar");
+      }
       renderizarResultados(data.resultados);
       renderizarAhorro(data.ahorro_maximo);
       // Los resultados ya están a la vista; el aviso aparece apenas después.

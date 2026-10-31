@@ -54,6 +54,7 @@ async function setup({ fragment = "", pending = null, verify = true, send = resp
     localStorage: storage(local), sessionStorage: storage(tab),
     document: {
       title: "FarmaPulse", getElementById: get, createElement: () => new Element(), body: new Element(),
+      addEventListener() {},
       querySelectorAll: (selector) => { const button = buttons.get(selector.slice(1, -1)); return button ? [button] : []; },
     },
     fetch: async (url, options) => {

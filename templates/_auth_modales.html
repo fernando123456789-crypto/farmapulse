@@ -1,13 +1,13 @@
-<div id="modalLogin" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+<div id="modalLogin" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="tituloLogin">
   <div class="absolute inset-0 bg-fpDark/70 backdrop-blur-sm" data-cerrar-modal></div>
   <div class="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-8 fp-fade-in">
-    <button type="button" data-cerrar-modal class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+    <button type="button" data-cerrar-modal aria-label="Cerrar inicio de sesión" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
       <i class="fa-solid fa-xmark text-lg"></i>
     </button>
     <div class="w-12 h-12 rounded-xl bg-fpMint flex items-center justify-center mb-4">
       <i class="fa-solid fa-right-to-bracket text-fpGreen text-xl"></i>
     </div>
-    <h2 class="text-xl font-extrabold text-fpDark mb-1">Inicia sesión</h2>
+    <h2 id="tituloLogin" class="text-xl font-extrabold text-fpDark mb-1">Inicia sesión</h2>
     <p class="text-slate-500 text-sm mb-6">Accede para guardar tu receta y ver tu historial.</p>
     <form id="formLogin" class="space-y-4">
       <div data-error class="hidden text-sm rounded-lg px-3 py-2 border"></div>
