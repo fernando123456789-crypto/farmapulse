@@ -654,9 +654,7 @@ def _generar_datos_demo(termino_busqueda, departamento=None, provincia=None,
     ] if termino else CATALOGO_MEDICAMENTOS
 
     if not coincidencias:
-        # Si no hay coincidencia exacta, se ofrece el catálogo completo
-        # para que el usuario vea alternativas relacionadas.
-        coincidencias = CATALOGO_MEDICAMENTOS[:4]
+        return []
 
     resultados = []
     distrito_final = distrito or "San Borja"
@@ -1531,10 +1529,9 @@ def api_buscar():
     """
     Busca `producto` en todas las farmacias activas (ver
     scrapers/registry.py — hoy Inkafarma y Mifarma; agregar una más no
-    requiere tocar esta ruta). Si ninguna farmacia devuelve resultados
-    (por ejemplo, mientras se completan los selectores de un scraper),
-    se usan datos de demostración para que el frontend nunca se quede
-    sin nada que mostrar — queda marcado como "fuente": "demo".
+    requiere tocar esta ruta). Si ninguna farmacia devuelve resultados,
+    se buscan coincidencias en el catálogo de demostración, marcado
+    como "fuente": "demo". Si tampoco coinciden, devuelve una lista vacía.
     """
     if request.method == "POST":
         payload = request.get_json(silent=True) or {}

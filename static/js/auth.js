@@ -93,8 +93,53 @@
     }
   }
 
-  function abrirModal(modal) { if (modal) modal.classList.remove("hidden"); }
-  function cerrarModal(modal) { if (modal) modal.classList.add("hidden"); }
+  let focoAnteriorLogin = null;
+
+  function abrirModal(modal) {
+    if (!modal) return;
+    if (modal === modalLogin && modal.classList.contains("hidden")) {
+      focoAnteriorLogin = document.activeElement;
+      modal.classList.remove("hidden");
+      modal.querySelector('input:not([disabled])')?.focus();
+      return;
+    }
+    modal.classList.remove("hidden");
+  }
+
+  function cerrarModal(modal) {
+    if (!modal) return;
+    const devolverFoco = modal === modalLogin && !modal.classList.contains("hidden");
+    modal.classList.add("hidden");
+    if (devolverFoco) {
+      const destino = focoAnteriorLogin?.isConnected ? focoAnteriorLogin : btnAbrirLogin;
+      destino?.focus();
+      focoAnteriorLogin = null;
+    }
+  }
+
+  document.addEventListener("keydown", (evento) => {
+    if (!modalLogin || modalLogin.classList.contains("hidden")) return;
+    if (evento.key === "Escape") {
+      evento.preventDefault();
+      cerrarModal(modalLogin);
+      return;
+    }
+    if (evento.key !== "Tab") return;
+    const controles = [...modalLogin.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]'
+    )].filter((el) => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length);
+    const primero = controles[0];
+    const ultimo = controles[controles.length - 1];
+    if (!primero) return;
+    const activo = document.activeElement;
+    if (evento.shiftKey && (activo === primero || !modalLogin.contains(activo))) {
+      evento.preventDefault();
+      ultimo.focus();
+    } else if (!evento.shiftKey && (activo === ultimo || !modalLogin.contains(activo))) {
+      evento.preventDefault();
+      primero.focus();
+    }
+  });
 
   function limpiarRecuperacion() {
     sesionRecuperacion = null;
