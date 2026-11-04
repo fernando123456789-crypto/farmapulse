@@ -1,0 +1,66 @@
+6970de8 | 2026-10-29 19:14 | fernando123456789-crypto | perf(admin): mejora rendimiento del panel admin
+1fd474e | 2026-10-28 18:17 | fernando123456789-crypto | Revert "Difiere scripts para mejorar el rendimiento en celular"
+99cca57 | 2026-10-28 18:11 | fernando123456789-crypto | Difiere scripts para mejorar el rendimiento en celular
+14d543e | 2026-10-28 12:57 | fernando123456789-crypto | Mejora accesibilidad: etiquetas de formulario y contraste de colores
+d0a6127 | 2026-10-24 22:28 | fernando123456789-crypto | healthz devuelve el commit en ejecucion
+b6cf3d9 | 2026-10-24 20:37 | fernando123456789-crypto | Despliegue automatico y prueba de rendimiento
+d90e033 | 2026-10-24 16:02 | hekalicpy | Corrige Quitar del carrito desde la tabla (#7)
+0c9daad | 2026-10-24 15:51 | ShadowCoder | Restaura main para tramitar la correccion mediante PR
+1d782a3 | 2026-10-24 15:46 | ShadowCoder | Corrige el evento duplicado del carrito
+947d7e8 | 2026-10-20 20:59 | fernando123456789-crypto | Agrego script de AdSense y CSP de Google
+f16a46d | 2026-10-20 20:23 | fernando123456789-crypto | Implemento patrón DAO en main
+1e1cfe6 | 2026-10-18 23:48 | fernando123456789-crypto | Migro pagos a Supabase, correo por Resend y quito carpeta duplicada
+e79e826 | 2026-10-18 13:15 | ShadowCoder | Estoy simplificando el texto del comprobante de compra
+56c06e8 | 2026-10-18 13:07 | ShadowCoder | Estoy habilitando correo HTTPS para los comprobantes
+72975bb | 2026-10-18 11:37 | fernando123456789-crypto | Agrego panel de administración y ajustes de configuración
+2b507ad | 2026-10-18 11:06 | ShadowCoder | Estoy simplificando el cierre de compra y los correos
+6eefb5d | 2026-10-18 10:44 | ShadowCoder | Estoy limitando la pasarela a pagos de prueba sin cuenta de Mercado Pago para el comprador
+b5bb95b | 2026-10-16 21:07 | ShadowCoder | Estoy corrigiendo los estados del checkout y documentando la prueba de pago en Render
+5707535 | 2026-10-16 21:03 | ShadowCoder | Estoy facilitando la instalación en otra laptop y corrigiendo el remitente por defecto
+8deef5f | 2026-10-16 20:47 | ShadowCoder | Estoy corrigiendo el mapa sin exponer datos privados en el Referer
+42f4258 | 2026-10-16 20:24 | hekalicpy | Estoy incorporando los pagos y las mejoras de seguridad a main
+63728f4 | 2026-10-16 20:15 | ShadowCoder | Estoy protegiendo las recetas, las sesiones y los pagos y limitando los intentos a cinco
+8386238 | 2026-10-16 19:50 | ShadowCoder | Estoy simplificando el mensaje de compra exitosa
+f7e866d | 2026-10-16 19:46 | ShadowCoder | Estoy simplificando el checkout a los datos de tarjeta y un único botón Pagar
+c5b77b6 | 2026-10-16 19:40 | ShadowCoder | Estoy agilizando la compra de prueba con aprobación oficial de Mercado Pago
+5611ca6 | 2026-10-16 19:27 | ShadowCoder | Estoy habilitando temporalmente las pruebas locales de correo con vencimiento automático
+55c1157 | 2026-10-16 15:42 | ShadowCoder | Estoy agregando la recuperación segura de contraseña y corrigiendo el acceso
+9a7a4dd | 2026-10-16 14:56 | ShadowCoder | Estoy corrigiendo el reenvío y los errores de confirmación de correo
+17ad289 | 2026-10-16 14:43 | ShadowCoder | Estoy simplificando el pago con tarjeta y activando HTTPS local
+0cd1d68 | 2026-10-16 14:27 | ShadowCoder | Estoy corrigiendo el carrito para continuar directamente al pago con tarjeta
+bf660b6 | 2026-10-16 14:18 | ShadowCoder | Estoy integrando Mercado Pago y asegurando el checkout con comprobantes automáticos
+673f64a | 2026-10-16 11:15 | hekalicpy | Merge pull request #5 from fernando123456789-crypto/feature/pasarela-pagos
+0b0abd9 | 2026-10-16 10:57 | ShadowCoder | Integro pagos con Culqi y envío comprobantes por correo
+7a19da1 | 2026-10-16 09:57 | ShadowCoder | Estoy exigiendo contrasenas de al menos 12 caracteres
+a0c8720 | 2026-10-16 09:55 | ShadowCoder | Estoy asegurando el registro con contrasenas fuertes
+8fddcf5 | 2026-10-09 09:27 | Juan | Merge pull request #2 from fernando123456789-crypto/feature/db-schema
+35bab78 | 2026-10-06 19:22 | fernando123456789-crypto | Permitir buscar sin login y sugerir iniciar sesión con aviso cerrable
+fe80194 | 2026-10-06 16:40 | fernando123456789-crypto | Arreglar estilos bajo la CSP y eximir de CSRF las rutas API
+56750ba | 2026-10-06 15:33 | fernando123456789-crypto | Restaurar requirements con dependencias necesarias
+04c3419 | 2026-10-06 15:16 | fernando123456789-crypto | Agregar gunicorn a requirements
+db2b13c | 2026-10-06 14:59 | fernando123456789-crypto | Dejar solo 3 farmacias en el inicio
+e125cb0 | 2026-10-05 16:43 | ShadowCoder | Estoy evitando que la caché cargue archivos antiguos y bloquee la página
+1ef112c | 2026-10-05 16:35 | ShadowCoder | Estoy quitando comentarios que revelan detalles internos del código
+fe11f5c | 2026-10-05 16:31 | ShadowCoder | Estoy adaptando la aplicación para reconocer HTTPS en Render
+b6a3875 | 2026-10-05 16:26 | ShadowCoder | Estoy documentando las medidas aplicadas a las 13 alertas de la auditoría
+dedcdb3 | 2026-10-05 16:26 | ShadowCoder | Estoy agregando pruebas para comprobar las protecciones de seguridad
+661914d | 2026-10-05 16:25 | ShadowCoder | Estoy reforzando la seguridad de las páginas y las peticiones
+cd1d7bb | 2026-10-04 19:09 | ShadowCoder | csrf-protection: previene ataques cross-site
+8f0acf7 | 2026-10-04 19:09 | ShadowCoder | csrf-protection: previene ataques cross-site
+54c66f8 | 2026-10-04 18:59 | ShadowCoder | https-enforcement: fuerza conexiones HTTPS seguras
+0929ce8 | 2026-10-04 18:46 | ShadowCoder | claves-robustas
+28ade04 | 2026-10-03 04:44 | Zuket0 | feat: agregar schema base e inicializacion de tablas
+09dd4be | 2026-10-02 15:58 | Zuket0 | feat: agregar schema base e inicializacion de tablas
+8b85d6e | 2026-09-30 19:08 | ShadowCoder | agrego límite de intentos al login
+d7550fa | 2026-09-30 18:02 | CesarJCR | Implementación del dao
+75829ca | 2026-09-30 16:59 | CesarJCR | Testeo de Push
+1b2e323 | 2026-09-17 21:17 | fernando123456789-crypto | Add files via upload
+88e5eb2 | 2026-09-17 21:16 | fernando123456789-crypto | Add files via upload
+9d82097 | 2026-09-17 21:13 | fernando123456789-crypto | Update README.md
+014f609 | 2026-09-17 21:10 | fernando123456789-crypto | Create README.md
+f3735d3 | 2026-09-17 21:04 | fernando123456789-crypto | Delete Analysis
+68c0cc8 | 2026-09-17 21:01 | fernando123456789-crypto | Create Analysis
+6523a73 | 2026-08-24 16:27 | fernando123456789-crypto | Agregar captura nocturna de precios
+b7b181e | 2026-08-24 15:31 | fernando123456789-crypto | Arreglar botones de login ocultos en móvil
+ca0bc93 | 2026-08-23 22:43 | fernando123456789-crypto | Agregar gunicorn para producción
+98df390 | 2026-08-23 22:29 | fernando123456789-crypto | Primera versión FarmaPulse
