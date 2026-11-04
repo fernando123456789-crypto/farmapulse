@@ -5,6 +5,7 @@
   esquema de sql/05_pagos_y_seguridad.sql) y FP_TEST_SERVICE_JWT; nunca usa tu proyecto real.
 """
 
+import base64
 import json
 import os
 import sys
@@ -61,6 +62,63 @@ class SupabaseRestTests(unittest.TestCase):
         sesion.request.side_effect = [requests.ConnectionError(), respuesta(200, [])]
         with patch("supabase_store.time.sleep"):
             self.assertEqual(rest.request("GET", "fp_payments", retries=1), [])
+
+
+class LocationAccessMockTests(unittest.TestCase):
+    def setUp(self):
+        self.user = {"id": "verified-user", "email": "buyer@example.invalid",
+                     "email_confirmed_at": "2026-01-01T00:00:00Z", "is_anonymous": False}
+        payload = base64.urlsafe_b64encode(json.dumps({"sub": self.user["id"], "email": self.user["email"]}).encode()).decode().rstrip("=")
+        self.token = "header." + payload + ".signature"
+        self.security = SupabaseIdentitySecurity(SupabaseRest("https://example.supabase.co", "sb_secret_private"), "test-secret")
+
+    def test_one_request_uses_user_jwt_and_public_key_not_service_credentials(self):
+        with patch.object(supabase_store.http_client, "request", return_value=respuesta(200, {"estado": "valida", "usuario": self.user})) as send:
+            self.assertEqual(self.security.authorize_location(self.token, "public-key"), (self.user, False))
+        send.assert_called_once()
+        args = send.call_args
+        self.assertEqual(args.args, ("POST", "https://example.supabase.co/rest/v1/rpc/fp_location_access"))
+        self.assertEqual(args.kwargs["headers"], {"apikey": "public-key", "Authorization": "Bearer " + self.token})
+        for value in args.kwargs["json"].values():
+            self.assertRegex(value, r"^[a-f0-9]{64}$")
+        self.assertNotIn("sb_secret_private", str(args))
+
+    def test_unverified_payload_alone_never_grants_access(self):
+        for status in (401, 403):
+            with self.subTest(status=status), patch.object(supabase_store.http_client, "request", return_value=respuesta(status, {})):
+                with self.assertRaises(ValueError):
+                    self.security.authorize_location(self.token, "public-key")
+
+    def test_invalid_or_revoked_session_is_rejected(self):
+        for state in ("invalida", "revocada", "unknown", None, [], {}):
+            with self.subTest(state=state), patch.object(supabase_store.http_client, "request", return_value=respuesta(200, {"estado": state})):
+                with self.assertRaises(ValueError):
+                    self.security.authorize_location(self.token, "public-key")
+
+    def test_blocked_account_remains_blocked(self):
+        with patch.object(supabase_store.http_client, "request", return_value=respuesta(200, {"estado": "bloqueada", "usuario": self.user})):
+            self.assertEqual(self.security.authorize_location(self.token, "public-key"), (self.user, True))
+
+    def test_different_or_unconfirmed_identity_is_rejected(self):
+        for changes in ({"id": "another-user"}, {"email": "another@example.invalid"}, {"email_confirmed_at": None}, {"is_anonymous": True}):
+            with self.subTest(changes=changes), patch.object(supabase_store.http_client, "request", return_value=respuesta(200, {"estado": "valida", "usuario": {**self.user, **changes}})):
+                with self.assertRaises(ValueError):
+                    self.security.authorize_location(self.token, "public-key")
+
+    def test_network_and_database_failure_do_not_grant_access(self):
+        with patch.object(supabase_store.http_client, "request", side_effect=requests.Timeout()):
+            with self.assertRaises(StoreError):
+                self.security.authorize_location(self.token, "public-key")
+        with patch.object(supabase_store.http_client, "request", return_value=respuesta(503, {})):
+            with self.assertRaises(StoreError):
+                self.security.authorize_location(self.token, "public-key")
+
+    def test_malformed_token_never_contacts_database(self):
+        with patch.object(supabase_store.http_client, "request") as send:
+            for token in ("invalid", "a.!.c", "a.W10.c"):
+                with self.subTest(token=token), self.assertRaises(ValueError):
+                    self.security.authorize_location(token, "public-key")
+        send.assert_not_called()
 
 
 class LedgerMockTests(unittest.TestCase):

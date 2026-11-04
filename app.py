@@ -553,6 +553,16 @@ def sesion_requerida(f):
             token = auth_header.removeprefix("Bearer ").strip()
             if not token or len(token) > 8192:
                 return jsonify({"ok": False, "requiere_login": True, "error": "La sesión venció. Inicia sesión nuevamente."}), 401
+            if request.endpoint == "api_validar_direccion" and isinstance(identity_security, SupabaseIdentitySecurity):
+                try:
+                    with measure_stage("seguridad"):
+                        g.usuario, blocked = identity_security.authorize_location(token, SUPABASE_KEY)
+                except ValueError:
+                    return jsonify({"ok": False, "requiere_login": True,
+                                    "error": "La sesión venció. Inicia sesión nuevamente."}), 401
+                if blocked:
+                    return _respuesta_acceso_bloqueado()
+                return f(*args, **kwargs)
             with measure_stage("revocacion"):
                 revoked = identity_security.token_revoked(token)
             if revoked:

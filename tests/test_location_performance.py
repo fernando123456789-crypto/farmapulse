@@ -7,6 +7,7 @@ from threading import Barrier
 from unittest.mock import Mock, patch
 
 import http_client
+from supabase_store import StoreError, SupabaseIdentitySecurity
 from test_identity_security import CheckoutIdentityFixture
 
 
@@ -69,6 +70,26 @@ class LocationPerformanceTests(CheckoutIdentityFixture, unittest.TestCase):
 
     def test_unrelated_route_has_no_location_timing_headers(self):
         self.assertNotIn("X-Request-Started-At", self.client.get("/api/ubicaciones").headers)
+
+    def test_supabase_location_uses_one_verified_access_call(self):
+        security = SupabaseIdentitySecurity(Mock(), "test-secret")
+        with patch.object(self.module, "identity_security", security), \
+             patch.object(security, "authorize_location", return_value=(self.user, False)) as authorize:
+            response = self.validar()
+        self.assertEqual(response.status_code, 200)
+        authorize.assert_called_once_with("test", self.module.SUPABASE_KEY)
+        self.module.auth_obtener_usuario.assert_not_called()
+        self.assertIn("seguridad;dur=", response.headers["Server-Timing"])
+
+    def test_supabase_rejection_block_and_failure_remain_closed(self):
+        security = SupabaseIdentitySecurity(Mock(), "test-secret")
+        with patch.object(self.module, "identity_security", security):
+            with patch.object(security, "authorize_location", side_effect=ValueError()):
+                self.assertEqual(self.validar().status_code, 401)
+            with patch.object(security, "authorize_location", return_value=(self.user, True)):
+                self.assertEqual(self.validar().status_code, 403)
+            with patch.object(security, "authorize_location", side_effect=StoreError("Unavailable")):
+                self.assertEqual(self.validar().status_code, 503)
 
 
 class HTTPConnectionTests(unittest.TestCase):
