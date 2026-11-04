@@ -66,20 +66,8 @@ solicitudes a una frecuencia de cien por minuto. Reutilizo una cuenta de prueba;
 no presento esa ejecución como cien identidades distintas ni como una prueba
 de cien usuarios simultáneos.
 
-Guardo los resultados en `validacion-direcciones-100rpm.json`, sin credenciales
-ni datos de la cuenta. En la versión inicial obtuve una máxima de 2283 ms y en
-una segunda comprobación tres respuestas superaron el segundo. Después de
-reunir las comprobaciones en una consulta obtuve cien HTTP 200 por debajo de
-1000 ms: media de 138,528 ms, percentil 95 de 199,592 ms y máxima de 431,322 ms.
-La primera consulta, medida aparte sin calentar esa conexión, tardó 672,130 ms.
-
-Verifico también la función en Supabase: firma alterada y llamada anónima
-devuelven 401. Pruebo sesión válida, revocación, bloqueo y sesión inexistente
-en una transacción con datos sintéticos que revierto por completo. No conservo
-cambios de esas pruebas en las tablas.
-
-La ejecución local comprueba el código y las consultas reales. Esta muestra
-no garantiza un máximo permanente: repito la carga en Render después de
-integrar y desplegar el pull request para evaluar la infraestructura publicada.
+Conservo las mediciones localmente y mantengo este documento centrado en la
+implementación. Repito la carga en Render después de integrar y desplegar el
+pull request para evaluar la infraestructura publicada.
 La función SQL nueva ya está instalada en Supabase y no la usa la aplicación
 anterior. Conservo su definición en `sql/06_validacion_direcciones.sql`.
