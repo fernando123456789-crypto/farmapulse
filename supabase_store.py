@@ -9,6 +9,8 @@ Ambas clases exponen la misma interfaz que ``PaymentLedger`` e ``IdentitySecurit
 (SQLite), así que app.py y el panel /admin no cambian su lógica.
 """
 
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -18,6 +20,7 @@ from datetime import datetime, timezone
 import requests
 
 from payment_ledger import LedgerBase
+from http_client import http_client
 
 T_PAGOS = "fp_payments"
 T_INTENTOS = "fp_identity_attempts"
@@ -39,7 +42,7 @@ class SupabaseRest:
             raise ValueError("Configura SUPABASE_URL (https) y SUPABASE_SECRET_KEY para usar Supabase")
         self.base = f"{url}/rest/v1"
         self.timeout = timeout
-        self.session = session or requests.Session()
+        self.session = session if session is not None else http_client
         self.headers = {"apikey": service_key, "Content-Type": "application/json"}
         # Las claves antiguas (service_role) son JWT y también van en Authorization.
         # Las nuevas (sb_secret_...) no son JWT: solo se envían en `apikey`.
@@ -194,6 +197,47 @@ class SupabaseIdentitySecurity:
             hmac.new(self.secret, f"{kind}:{value}".encode("utf-8"), hashlib.sha256).hexdigest()
             for kind, value in identifiers.items() if value
         })
+
+    def authorize_location(self, token, public_key):
+        # Solo leo estas referencias para calcular huellas, nunca para autorizar.
+        # PostgREST verifica la firma y la caducidad antes de ejecutar la función.
+        try:
+            parts = token.split(".")
+            if len(parts) != 3:
+                raise ValueError
+            claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+            user_id, email = claims["sub"], claims["email"]
+            if (not isinstance(user_id, str) or not 1 <= len(user_id) <= 64
+                    or not isinstance(email, str) or not 1 <= len(email) <= 254):
+                raise ValueError
+        except (ValueError, KeyError, TypeError, UnicodeError, binascii.Error) as error:
+            raise ValueError("Sesión inválida") from error
+        try:
+            response = http_client.request(
+                "POST", f"{self.rest.base}/rpc/fp_location_access",
+                headers={"apikey": public_key, "Authorization": f"Bearer {token}"},
+                json={"p_token_hash": self._keys({"sesion": token})[0],
+                      "p_user_hash": self._keys({"usuario": user_id})[0],
+                      "p_email_hash": self._keys({"correo": email.strip().lower()})[0]},
+                timeout=self.rest.timeout,
+            )
+            if response.status_code in (401, 403):
+                raise ValueError("Sesión inválida")
+            if response.status_code >= 400:
+                raise StoreError("No se pudo comprobar el acceso de ubicación")
+            data = response.json()
+        except requests.RequestException as error:
+            raise StoreError("No se pudo contactar al servicio de acceso") from error
+        if (not isinstance(data, dict) or not isinstance(data.get("estado"), str)
+                or data["estado"] not in {"valida", "bloqueada"}):
+            raise ValueError("Sesión inválida")
+        user = data.get("usuario")
+        if (not isinstance(user, dict) or user.get("id") != user_id
+                or not isinstance(user.get("email"), str)
+                or user["email"].strip().lower() != email.strip().lower()
+                or not user.get("email_confirmed_at") or user.get("is_anonymous")):
+            raise ValueError("Sesión inválida")
+        return user, data["estado"] == "bloqueada"
 
     def revoke_token(self, token):
         key = self._keys({"sesion": token})[0]
