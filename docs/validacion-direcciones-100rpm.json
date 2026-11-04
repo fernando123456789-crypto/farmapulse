@@ -1,0 +1,47 @@
+{
+  "fecha_utc": "2026-11-04T03:03:11.862271+00:00",
+  "ruta": "/api/direcciones/validar",
+  "entorno": "Flask local con autenticación, revocaciones y bloqueos en Supabase real; no es Render",
+  "cuentas_de_prueba": 1,
+  "hilos_maximos": 4,
+  "frecuencia_objetivo_por_minuto": 100,
+  "duracion_segundos": 59.858,
+  "comparacion": {
+    "antes": {
+      "solicitudes": 6,
+      "estados": {
+        "200": 6
+      },
+      "correctas": 6,
+      "con_medicion": 6,
+      "media_ms": 937.574,
+      "p50_ms": 816.696,
+      "p95_ms": 1577.731,
+      "max_ms": 1577.731
+    },
+    "despues": {
+      "solicitudes": 6,
+      "estados": {
+        "200": 6
+      },
+      "correctas": 6,
+      "con_medicion": 6,
+      "media_ms": 561.459,
+      "p50_ms": 513.928,
+      "p95_ms": 829.42,
+      "max_ms": 829.42
+    }
+  },
+  "carga": {
+    "solicitudes": 100,
+    "estados": {
+      "200": 100
+    },
+    "correctas": 100,
+    "con_medicion": 100,
+    "media_ms": 542.927,
+    "p50_ms": 458.803,
+    "p95_ms": 824.355,
+    "max_ms": 2283.01
+  }
+}

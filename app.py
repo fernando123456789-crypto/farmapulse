@@ -55,6 +55,8 @@ from identity_security import IdentitySecurity
 from mailer import MailError, correo_configurado, enviar_correo
 from supabase_store import (StoreError, SupabaseIdentitySecurity, SupabasePaymentLedger, SupabaseRest)
 from delivery_location import district_for_point
+from http_client import http_client
+from request_timing import measure_stage, register_location_timing
 from payment_ledger import PaymentLedger
 import admin_panel
 from mercado_pago import ORDER_ID, crear_orden, leer_orden
@@ -67,6 +69,7 @@ from mercado_pago import ORDER_ID, crear_orden, leer_orden
 load_dotenv(Path(__file__).resolve().with_name(".env"))
 
 app = Flask(__name__)
+register_location_timing(app)
 csrf = CSRFProtect(app)
 
 # Validar que SECRET_KEY esté configurada en .env (nunca usar default inseguro en producción)
@@ -289,10 +292,8 @@ _MEMORIA_RECETAS = []
 # ---------------------------------------------------------------------------
 # Autenticación (Supabase Auth) — correo + contraseña, "lo clásico"
 # ---------------------------------------------------------------------------
-# Se llama directo a la REST API de Supabase Auth. Un cliente global que
-# guardara sesiones mezclaría las de usuarios concurrentes. Cada
-# petición lleva su propio token: es el patrón correcto para un backend
-# multiusuario.
+# Consulto Supabase Auth con conexiones reutilizables por hilo. Cada petición
+# envía su propio token; no conservo identidades ni cookies entre usuarios.
 AUTH_TIMEOUT = 8
 receta_dao = RecetaDAO(SUPABASE_URL, SUPABASE_KEY, _MEMORIA_RECETAS, timeout=AUTH_TIMEOUT)
 
@@ -447,7 +448,8 @@ def auth_cerrar_sesion(access_token: str) -> None:
 
 
 def auth_obtener_usuario(access_token: str) -> dict:
-    respuesta = requests.get(_auth_url("/user"), headers=_auth_headers(access_token), timeout=AUTH_TIMEOUT)
+    respuesta = http_client.request("GET", _auth_url("/user"),
+                                   headers=_auth_headers(access_token), timeout=AUTH_TIMEOUT)
     if respuesta.status_code >= 400:
         raise ValueError("Sesión inválida o expirada")
     usuario = respuesta.json()
@@ -549,10 +551,15 @@ def sesion_requerida(f):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer ") and _supabase_configurado():
             token = auth_header.removeprefix("Bearer ").strip()
-            if not token or len(token) > 8192 or identity_security.token_revoked(token):
+            if not token or len(token) > 8192:
+                return jsonify({"ok": False, "requiere_login": True, "error": "La sesión venció. Inicia sesión nuevamente."}), 401
+            with measure_stage("revocacion"):
+                revoked = identity_security.token_revoked(token)
+            if revoked:
                 return jsonify({"ok": False, "requiere_login": True, "error": "La sesión venció. Inicia sesión nuevamente."}), 401
             try:
-                g.usuario = auth_obtener_usuario(token)
+                with measure_stage("autenticacion"):
+                    g.usuario = auth_obtener_usuario(token)
             except Exception:
                 g.usuario = None
         if not g.usuario:
@@ -561,8 +568,11 @@ def sesion_requerida(f):
                 "error": "Debes iniciar sesión para usar esta función",
                 "requiere_login": True,
             }), 401
-        if request.endpoint != "api_auth_eliminar" and _acceso_bloqueado(g.usuario):
-            return _respuesta_acceso_bloqueado()
+        if request.endpoint != "api_auth_eliminar":
+            with measure_stage("bloqueo"):
+                blocked = _acceso_bloqueado(g.usuario)
+            if blocked:
+                return _respuesta_acceso_bloqueado()
         return f(*args, **kwargs)
     return envoltura
 
@@ -989,7 +999,7 @@ def api_sugerencias_direccion():
 
 @app.route("/api/direcciones/validar", methods=["POST"])
 @csrf.exempt
-@limiter.limit("10 per minute")
+@limiter.exempt
 @sesion_requerida
 def api_validar_direccion():
     body = request.get_json(silent=True) or {}
@@ -997,7 +1007,8 @@ def api_validar_direccion():
         return jsonify({"ok": False, "error": "La solicitud no es válida"}), 400
     latitud, longitud = body.get("latitud"), body.get("longitud")
     direccion = body.get("direccion")
-    distrito = district_for_point(latitud, longitud)
+    with measure_stage("geometria"):
+        distrito = district_for_point(latitud, longitud)
     if not distrito:
         return jsonify({"ok": False, "error": "Ese punto está fuera de nuestra zona de reparto"}), 400
     if not isinstance(direccion, str) or not 5 <= len(direccion.strip()) <= 250:

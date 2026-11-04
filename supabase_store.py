@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import requests
 
 from payment_ledger import LedgerBase
+from http_client import http_client
 
 T_PAGOS = "fp_payments"
 T_INTENTOS = "fp_identity_attempts"
@@ -39,7 +40,7 @@ class SupabaseRest:
             raise ValueError("Configura SUPABASE_URL (https) y SUPABASE_SECRET_KEY para usar Supabase")
         self.base = f"{url}/rest/v1"
         self.timeout = timeout
-        self.session = session or requests.Session()
+        self.session = session if session is not None else http_client
         self.headers = {"apikey": service_key, "Content-Type": "application/json"}
         # Las claves antiguas (service_role) son JWT y también van en Authorization.
         # Las nuevas (sb_secret_...) no son JWT: solo se envían en `apikey`.

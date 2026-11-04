@@ -95,7 +95,7 @@ class SecurityApiTests(CheckoutIdentityFixture, unittest.TestCase):
                      {'id': 'buyer', 'email': 'b@example.com', 'email_confirmed_at': 'now', 'is_anonymous': True}):
             response = Mock(status_code=200)
             response.json.return_value = user
-            with patch.object(self.module.requests, 'get', return_value=response), self.assertRaises(ValueError):
+            with patch.object(self.module.http_client, 'request', return_value=response), self.assertRaises(ValueError):
                 self.real_auth_user('token')
 
     def test_recipe_uses_owner_token_and_never_client_owner(self):
