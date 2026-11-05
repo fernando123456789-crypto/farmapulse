@@ -36,6 +36,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from functools import wraps, lru_cache
 from pathlib import Path
+from threading import Event, Lock
 from urllib.parse import urlsplit
 
 import requests
@@ -126,6 +127,11 @@ SUPABASE_ADMIN_KEY = (
 USE_POOLED_HTTP = os.getenv("USE_POOLED_HTTP", "").strip().lower() in {"1", "true", "yes"}
 ENABLE_SEARCH_CACHE = os.getenv("ENABLE_SEARCH_CACHE", "").strip().lower() in {"1", "true", "yes"}
 SEARCH_CACHE_SECONDS = 30
+SEARCH_CACHE_WAIT_SECONDS = 30
+SEARCH_CACHE_MAX_ENTRIES = 256
+_SEARCH_CACHE = {}
+_SEARCH_CACHE_INFLIGHT = {}
+_SEARCH_CACHE_LOCK = Lock()
 
 
 def _external_request(method, url, **kwargs):
@@ -134,20 +140,49 @@ def _external_request(method, url, **kwargs):
     return getattr(requests, method.lower())(url, **kwargs)
 
 
-@lru_cache(maxsize=256)
-def _buscar_en_farmacias_cacheado(termino: str, farmacia_filtro: str, ventana: int) -> tuple:
-    """Evita repetir scraping idéntico durante una ventana corta de carga."""
-    del ventana  # La ventana forma parte de la clave de caché y vence el resultado.
-    return tuple(buscar_en_farmacias(termino, farmacia_filtro=farmacia_filtro or None))
-
-
 def _buscar_en_farmacias_optimizado(termino: str, farmacia_filtro: str | None) -> list:
     if not ENABLE_SEARCH_CACHE:
         return buscar_en_farmacias(termino, farmacia_filtro=farmacia_filtro)
-    ventana = int(time.monotonic() // SEARCH_CACHE_SECONDS)
-    # app.py agrega IDs y cotizaciones a los resultados; devuelvo una copia para
-    # que esas mutaciones nunca contaminan la siguiente respuesta cacheada.
-    return copy.deepcopy(list(_buscar_en_farmacias_cacheado(termino, farmacia_filtro or "", ventana)))
+
+    clave = (termino, farmacia_filtro or "")
+    ahora = time.monotonic()
+    lider = False
+    with _SEARCH_CACHE_LOCK:
+        entrada = _SEARCH_CACHE.get(clave)
+        if entrada and entrada[0] > ahora:
+            return copy.deepcopy(list(entrada[1]))
+        espera = _SEARCH_CACHE_INFLIGHT.get(clave)
+        if espera is None:
+            espera = Event()
+            _SEARCH_CACHE_INFLIGHT[clave] = espera
+            lider = True
+
+    if not lider:
+        # Una sola petición consulta las farmacias. Las demás esperan ese resultado
+        # en vez de iniciar el mismo scraping simultáneamente bajo carga.
+        espera.wait(SEARCH_CACHE_WAIT_SECONDS)
+        with _SEARCH_CACHE_LOCK:
+            entrada = _SEARCH_CACHE.get(clave)
+            if entrada and entrada[0] > time.monotonic():
+                return copy.deepcopy(list(entrada[1]))
+        return buscar_en_farmacias(termino, farmacia_filtro=farmacia_filtro)
+
+    try:
+        resultado = tuple(buscar_en_farmacias(termino, farmacia_filtro=farmacia_filtro))
+        with _SEARCH_CACHE_LOCK:
+            ahora = time.monotonic()
+            vencidas = [k for k, (vence, _) in _SEARCH_CACHE.items() if vence <= ahora]
+            for k in vencidas:
+                _SEARCH_CACHE.pop(k, None)
+            if len(_SEARCH_CACHE) >= SEARCH_CACHE_MAX_ENTRIES:
+                mas_antigua = min(_SEARCH_CACHE, key=lambda k: _SEARCH_CACHE[k][0])
+                _SEARCH_CACHE.pop(mas_antigua, None)
+            _SEARCH_CACHE[clave] = (ahora + SEARCH_CACHE_SECONDS, resultado)
+        return copy.deepcopy(list(resultado))
+    finally:
+        with _SEARCH_CACHE_LOCK:
+            _SEARCH_CACHE_INFLIGHT.pop(clave, None)
+            espera.set()
 
 # Almacenamiento de pagos, bloqueos de identidad y sesiones revocadas:
 #   supabase -> tablas fp_* en Postgres (producción; sobrevive a los despliegues de Render Free)
@@ -557,15 +592,26 @@ def sesion_opcional(f):
     @wraps(f)
     def envoltura(*args, **kwargs):
         g.usuario = None
+        validacion_unificada = False
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer ") and _supabase_configurado():
             token = auth_header.removeprefix("Bearer ").strip()
-            if token and len(token) <= 8192 and not identity_security.token_revoked(token):
-                try:
-                    g.usuario = auth_obtener_usuario(token)
-                except Exception:
-                    g.usuario = None
-        if g.usuario and _acceso_bloqueado(g.usuario):
+            if token and len(token) <= 8192:
+                if isinstance(identity_security, SupabaseIdentitySecurity):
+                    validacion_unificada = True
+                    try:
+                        g.usuario, blocked = identity_security.authorize(token, SUPABASE_KEY)
+                    except ValueError:
+                        g.usuario = None
+                    else:
+                        if blocked:
+                            return _respuesta_acceso_bloqueado()
+                elif not identity_security.token_revoked(token):
+                    try:
+                        g.usuario = auth_obtener_usuario(token)
+                    except Exception:
+                        g.usuario = None
+        if g.usuario and not validacion_unificada and _acceso_bloqueado(g.usuario):
             return _respuesta_acceso_bloqueado()
         return f(*args, **kwargs)
     return envoltura
@@ -583,13 +629,13 @@ def sesion_requerida(f):
             token = auth_header.removeprefix("Bearer ").strip()
             if not token or len(token) > 8192:
                 return jsonify({"ok": False, "requiere_login": True, "error": "La sesión venció. Inicia sesión nuevamente."}), 401
-            # Mantengo la RPC ya existente solo para la validación de dirección.
-            # Las demás rutas continúan con el flujo actual hasta que se ejecute
-            # voluntariamente la migración SQL de sesión unificada.
-            if request.endpoint == "api_validar_direccion" and isinstance(identity_security, SupabaseIdentitySecurity):
+            if isinstance(identity_security, SupabaseIdentitySecurity):
                 try:
                     with measure_stage("seguridad"):
-                        g.usuario, blocked = identity_security.authorize_location(token, SUPABASE_KEY)
+                        authorize = (identity_security.authorize_location
+                                     if request.endpoint == "api_validar_direccion"
+                                     else identity_security.authorize)
+                        g.usuario, blocked = authorize(token, SUPABASE_KEY)
                 except ValueError:
                     return jsonify({"ok": False, "requiere_login": True,
                                     "error": "La sesión venció. Inicia sesión nuevamente."}), 401
