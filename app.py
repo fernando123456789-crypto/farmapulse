@@ -22,6 +22,7 @@ Luego abrir http://127.0.0.1:5000
 """
 
 import os
+import copy
 import hashlib
 import hmac
 import random
@@ -119,6 +120,34 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_ADMIN_KEY = (
     os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 ).strip()
+# En Render, reutilizo conexiones TCP/TLS a proveedores. Se mantiene apagado
+# por defecto en desarrollo para que los dobles de prueba de ``requests``
+# sigan siendo sencillos y no se altere el entorno local.
+USE_POOLED_HTTP = os.getenv("USE_POOLED_HTTP", "").strip().lower() in {"1", "true", "yes"}
+ENABLE_SEARCH_CACHE = os.getenv("ENABLE_SEARCH_CACHE", "").strip().lower() in {"1", "true", "yes"}
+SEARCH_CACHE_SECONDS = 30
+
+
+def _external_request(method, url, **kwargs):
+    if USE_POOLED_HTTP:
+        return http_client.request(method, url, **kwargs)
+    return getattr(requests, method.lower())(url, **kwargs)
+
+
+@lru_cache(maxsize=256)
+def _buscar_en_farmacias_cacheado(termino: str, farmacia_filtro: str, ventana: int) -> tuple:
+    """Evita repetir scraping idéntico durante una ventana corta de carga."""
+    del ventana  # La ventana forma parte de la clave de caché y vence el resultado.
+    return tuple(buscar_en_farmacias(termino, farmacia_filtro=farmacia_filtro or None))
+
+
+def _buscar_en_farmacias_optimizado(termino: str, farmacia_filtro: str | None) -> list:
+    if not ENABLE_SEARCH_CACHE:
+        return buscar_en_farmacias(termino, farmacia_filtro=farmacia_filtro)
+    ventana = int(time.monotonic() // SEARCH_CACHE_SECONDS)
+    # app.py agrega IDs y cotizaciones a los resultados; devuelvo una copia para
+    # que esas mutaciones nunca contaminan la siguiente respuesta cacheada.
+    return copy.deepcopy(list(_buscar_en_farmacias_cacheado(termino, farmacia_filtro or "", ventana)))
 
 # Almacenamiento de pagos, bloqueos de identidad y sesiones revocadas:
 #   supabase -> tablas fp_* en Postgres (producción; sobrevive a los despliegues de Render Free)
@@ -295,7 +324,8 @@ _MEMORIA_RECETAS = []
 # Consulto Supabase Auth con conexiones reutilizables por hilo. Cada petición
 # envía su propio token; no conservo identidades ni cookies entre usuarios.
 AUTH_TIMEOUT = 8
-receta_dao = RecetaDAO(SUPABASE_URL, SUPABASE_KEY, _MEMORIA_RECETAS, timeout=AUTH_TIMEOUT)
+receta_dao = RecetaDAO(SUPABASE_URL, SUPABASE_KEY, _MEMORIA_RECETAS, timeout=AUTH_TIMEOUT,
+                       session=http_client if USE_POOLED_HTTP else None)
 
 
 class AuthEmailError(ValueError):
@@ -350,7 +380,7 @@ def _supabase_configurado() -> bool:
 
 
 def auth_registrar(email: str, password: str, redirect_to: str) -> dict:
-    respuesta = requests.post(
+    respuesta = _external_request("POST",
         _auth_url("/signup"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
         json={"email": email, "password": password}, timeout=AUTH_TIMEOUT,
     )
@@ -358,7 +388,7 @@ def auth_registrar(email: str, password: str, redirect_to: str) -> dict:
 
 
 def auth_reenviar_confirmacion(email: str, redirect_to: str) -> dict:
-    respuesta = requests.post(
+    respuesta = _external_request("POST",
         _auth_url("/resend"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
         json={"type": "signup", "email": email}, timeout=AUTH_TIMEOUT,
     )
@@ -366,7 +396,7 @@ def auth_reenviar_confirmacion(email: str, redirect_to: str) -> dict:
 
 
 def auth_recuperar_contrasena(email: str, redirect_to: str) -> dict:
-    respuesta = requests.post(
+    respuesta = _external_request("POST",
         _auth_url("/recover"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
         json={"email": email}, timeout=AUTH_TIMEOUT,
     )
@@ -389,7 +419,7 @@ _limite_correos_cuenta = limiter.shared_limit(_limite_correo_auth, scope="correo
 
 
 def auth_iniciar_sesion(email: str, password: str) -> dict:
-    respuesta = requests.post(
+    respuesta = _external_request("POST",
         _auth_url("/token?grant_type=password"), headers=_auth_headers(),
         json={"email": email, "password": password}, timeout=AUTH_TIMEOUT,
     )
@@ -416,7 +446,7 @@ def auth_iniciar_sesion(email: str, password: str) -> dict:
 
 
 def auth_actualizar_contrasena(access_token: str, password: str) -> dict:
-    respuesta = requests.put(
+    respuesta = _external_request("PUT",
         _auth_url("/user"), headers=_auth_headers(access_token),
         json={"password": password}, timeout=AUTH_TIMEOUT,
     )
@@ -444,7 +474,7 @@ def auth_actualizar_contrasena(access_token: str, password: str) -> dict:
 
 def auth_cerrar_sesion(access_token: str) -> None:
     identity_security.revoke_token(access_token)
-    requests.post(_auth_url("/logout"), headers=_auth_headers(access_token), timeout=AUTH_TIMEOUT)
+    _external_request("POST", _auth_url("/logout"), headers=_auth_headers(access_token), timeout=AUTH_TIMEOUT)
 
 
 def auth_obtener_usuario(access_token: str) -> dict:
@@ -461,7 +491,7 @@ def auth_obtener_usuario(access_token: str) -> dict:
 
 def consultar_dni_reniec(dni: str) -> dict:
     """Consulta nombres por DNI sin exponer el token del proveedor al navegador."""
-    respuesta = requests.get(
+    respuesta = _external_request("GET",
         "https://api.decolecta.com/v1/reniec/dni",
         params={"numero": dni},
         headers={"Authorization": f"Bearer {RENIEC_TOKEN}", "Accept": "application/json"},
@@ -553,6 +583,9 @@ def sesion_requerida(f):
             token = auth_header.removeprefix("Bearer ").strip()
             if not token or len(token) > 8192:
                 return jsonify({"ok": False, "requiere_login": True, "error": "La sesión venció. Inicia sesión nuevamente."}), 401
+            # Mantengo la RPC ya existente solo para la validación de dirección.
+            # Las demás rutas continúan con el flujo actual hasta que se ejecute
+            # voluntariamente la migración SQL de sesión unificada.
             if request.endpoint == "api_validar_direccion" and isinstance(identity_security, SupabaseIdentitySecurity):
                 try:
                     with measure_stage("seguridad"):
@@ -933,7 +966,7 @@ def _normalizar_texto(texto: str) -> str:
 
 
 def _consultar_sugerencias_direccion(texto: str, distrito: str = "") -> list:
-    respuesta = requests.get(
+    respuesta = _external_request("GET",
         "https://photon.komoot.io/api/",
         params={"q": f"{texto}, {distrito}, Lima, Peru", "limit": 30,
                 "lat": -12.085, "lon": -77.01, "zoom": 15,
@@ -1180,7 +1213,7 @@ def api_checkout_pagar():
     })
     payload = crear_orden(orden["id"], total, email, cliente, token, method, payment_type, int(installments))
     try:
-        respuesta = requests.post("https://api.mercadopago.com/v1/orders",
+        respuesta = _external_request("POST", "https://api.mercadopago.com/v1/orders",
             headers={"Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}", "Content-Type": "application/json",
                      "X-Idempotency-Key": orden["id"]}, json=payload, timeout=20)
         datos = respuesta.json()
@@ -1275,7 +1308,7 @@ def api_checkout_estado(orden_id):
     if record["state"] != "pending" or not result or not result.get("orden_proveedor"):
         return jsonify(result or {"ok": False, "estado": "procesando"}), record["status"] or 202
     try:
-        response = requests.get(f"https://api.mercadopago.com/v1/orders/{result['orden_proveedor']}",
+        response = _external_request("GET", f"https://api.mercadopago.com/v1/orders/{result['orden_proveedor']}",
             headers={"Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}"}, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -1303,7 +1336,7 @@ def api_mercado_pago_webhook():
     if not hmac.compare_digest(expected, supplied):
         return jsonify({"ok": False}), 401
     try:
-        response = requests.get(f"https://api.mercadopago.com/v1/orders/{payment_id}",
+        response = _external_request("GET", f"https://api.mercadopago.com/v1/orders/{payment_id}",
             headers={"Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}"}, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -1461,8 +1494,10 @@ def api_auth_login():
     except requests.RequestException:
         return jsonify({"ok": False, "error": "No se pudo contactar el servicio de autenticación"}), 502
 
-    if _acceso_bloqueado(datos.get("user") or {"email": email}):
-        return _respuesta_acceso_bloqueado()
+    # Ya comprobé el correo antes de autenticar. Los bloqueos de identidad se
+    # registran también con ese correo, así que repetir una segunda consulta
+    # remota con el mismo identificador no aporta seguridad y sí duplica la
+    # latencia del login bajo carga.
     return jsonify({
         "ok": True,
         "usuario": datos.get("user"),
@@ -1515,7 +1550,7 @@ def api_auth_eliminar():
         return jsonify({"ok": False, "error": "No se pudo verificar la cuenta actual"}), 401
 
     try:
-        respuesta = requests.delete(
+        respuesta = _external_request("DELETE",
             f"{SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{usuario_id}",
             headers={
                 "apikey": SUPABASE_ADMIN_KEY,
@@ -1577,7 +1612,7 @@ def api_buscar():
             or (distrito and distrito not in ZONA_DELIVERY)):
         return jsonify({"ok": False, "error": "Selecciona una ubicación de nuestra zona de reparto"}), 400
 
-    resultados = buscar_en_farmacias(termino, farmacia_filtro=farmacia or None)
+    resultados = _buscar_en_farmacias_optimizado(termino, farmacia or None)
     for r in resultados:
         r.setdefault("id", str(uuid.uuid4()))
 
