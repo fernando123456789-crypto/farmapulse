@@ -22,6 +22,7 @@ Luego abrir http://127.0.0.1:5000
 """
 
 import os
+import copy
 import hashlib
 import hmac
 import random
@@ -35,6 +36,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from functools import wraps, lru_cache
 from pathlib import Path
+from threading import Event, Lock
 from urllib.parse import urlsplit
 
 import requests
@@ -119,6 +121,80 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_ADMIN_KEY = (
     os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 ).strip()
+# En Render, reutilizo conexiones TCP/TLS a proveedores. Se mantiene apagado
+# por defecto en desarrollo para que los dobles de prueba de ``requests``
+# sigan siendo sencillos y no se altere el entorno local.
+USE_POOLED_HTTP = os.getenv("USE_POOLED_HTTP", "").strip().lower() in {"1", "true", "yes"}
+ENABLE_SEARCH_CACHE = os.getenv("ENABLE_SEARCH_CACHE", "").strip().lower() in {"1", "true", "yes"}
+ENABLE_SUGGESTIONS_CACHE = os.getenv(
+    "ENABLE_SUGGESTIONS_CACHE", os.getenv("ENABLE_SEARCH_CACHE", "")
+).strip().lower() in {"1", "true", "yes"}
+SEARCH_CACHE_SECONDS = 30
+SEARCH_CACHE_WAIT_SECONDS = 30
+SEARCH_CACHE_MAX_ENTRIES = 256
+_SEARCH_CACHE = {}
+_SEARCH_CACHE_INFLIGHT = {}
+_SEARCH_CACHE_LOCK = Lock()
+SUGGESTIONS_CACHE_SECONDS = 60
+SUGGESTIONS_STALE_SECONDS = 300
+SUGGESTIONS_WAIT_SECONDS = 9
+SUGGESTIONS_FAILURE_SECONDS = 2
+SUGGESTIONS_CACHE_MAX_ENTRIES = 256
+_SUGGESTIONS_CACHE = {}
+_SUGGESTIONS_INFLIGHT = {}
+_SUGGESTIONS_FAILURES = {}
+_SUGGESTIONS_CACHE_LOCK = Lock()
+
+
+def _external_request(method, url, **kwargs):
+    if USE_POOLED_HTTP:
+        return http_client.request(method, url, **kwargs)
+    return getattr(requests, method.lower())(url, **kwargs)
+
+
+def _buscar_en_farmacias_optimizado(termino: str, farmacia_filtro: str | None) -> list:
+    if not ENABLE_SEARCH_CACHE:
+        return buscar_en_farmacias(termino, farmacia_filtro=farmacia_filtro)
+
+    clave = (termino, farmacia_filtro or "")
+    ahora = time.monotonic()
+    lider = False
+    with _SEARCH_CACHE_LOCK:
+        entrada = _SEARCH_CACHE.get(clave)
+        if entrada and entrada[0] > ahora:
+            return copy.deepcopy(list(entrada[1]))
+        espera = _SEARCH_CACHE_INFLIGHT.get(clave)
+        if espera is None:
+            espera = Event()
+            _SEARCH_CACHE_INFLIGHT[clave] = espera
+            lider = True
+
+    if not lider:
+        # Una sola petición consulta las farmacias. Las demás esperan ese resultado
+        # en vez de iniciar el mismo scraping simultáneamente bajo carga.
+        espera.wait(SEARCH_CACHE_WAIT_SECONDS)
+        with _SEARCH_CACHE_LOCK:
+            entrada = _SEARCH_CACHE.get(clave)
+            if entrada and entrada[0] > time.monotonic():
+                return copy.deepcopy(list(entrada[1]))
+        return buscar_en_farmacias(termino, farmacia_filtro=farmacia_filtro)
+
+    try:
+        resultado = tuple(buscar_en_farmacias(termino, farmacia_filtro=farmacia_filtro))
+        with _SEARCH_CACHE_LOCK:
+            ahora = time.monotonic()
+            vencidas = [k for k, (vence, _) in _SEARCH_CACHE.items() if vence <= ahora]
+            for k in vencidas:
+                _SEARCH_CACHE.pop(k, None)
+            if len(_SEARCH_CACHE) >= SEARCH_CACHE_MAX_ENTRIES:
+                mas_antigua = min(_SEARCH_CACHE, key=lambda k: _SEARCH_CACHE[k][0])
+                _SEARCH_CACHE.pop(mas_antigua, None)
+            _SEARCH_CACHE[clave] = (ahora + SEARCH_CACHE_SECONDS, resultado)
+        return copy.deepcopy(list(resultado))
+    finally:
+        with _SEARCH_CACHE_LOCK:
+            _SEARCH_CACHE_INFLIGHT.pop(clave, None)
+            espera.set()
 
 # Almacenamiento de pagos, bloqueos de identidad y sesiones revocadas:
 #   supabase -> tablas fp_* en Postgres (producción; sobrevive a los despliegues de Render Free)
@@ -295,7 +371,8 @@ _MEMORIA_RECETAS = []
 # Consulto Supabase Auth con conexiones reutilizables por hilo. Cada petición
 # envía su propio token; no conservo identidades ni cookies entre usuarios.
 AUTH_TIMEOUT = 8
-receta_dao = RecetaDAO(SUPABASE_URL, SUPABASE_KEY, _MEMORIA_RECETAS, timeout=AUTH_TIMEOUT)
+receta_dao = RecetaDAO(SUPABASE_URL, SUPABASE_KEY, _MEMORIA_RECETAS, timeout=AUTH_TIMEOUT,
+                       session=http_client if USE_POOLED_HTTP else None)
 
 
 class AuthEmailError(ValueError):
@@ -350,7 +427,7 @@ def _supabase_configurado() -> bool:
 
 
 def auth_registrar(email: str, password: str, redirect_to: str) -> dict:
-    respuesta = requests.post(
+    respuesta = _external_request("POST",
         _auth_url("/signup"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
         json={"email": email, "password": password}, timeout=AUTH_TIMEOUT,
     )
@@ -358,7 +435,7 @@ def auth_registrar(email: str, password: str, redirect_to: str) -> dict:
 
 
 def auth_reenviar_confirmacion(email: str, redirect_to: str) -> dict:
-    respuesta = requests.post(
+    respuesta = _external_request("POST",
         _auth_url("/resend"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
         json={"type": "signup", "email": email}, timeout=AUTH_TIMEOUT,
     )
@@ -366,7 +443,7 @@ def auth_reenviar_confirmacion(email: str, redirect_to: str) -> dict:
 
 
 def auth_recuperar_contrasena(email: str, redirect_to: str) -> dict:
-    respuesta = requests.post(
+    respuesta = _external_request("POST",
         _auth_url("/recover"), params={"redirect_to": redirect_to}, headers=_auth_headers(),
         json={"email": email}, timeout=AUTH_TIMEOUT,
     )
@@ -389,7 +466,7 @@ _limite_correos_cuenta = limiter.shared_limit(_limite_correo_auth, scope="correo
 
 
 def auth_iniciar_sesion(email: str, password: str) -> dict:
-    respuesta = requests.post(
+    respuesta = _external_request("POST",
         _auth_url("/token?grant_type=password"), headers=_auth_headers(),
         json={"email": email, "password": password}, timeout=AUTH_TIMEOUT,
     )
@@ -416,7 +493,7 @@ def auth_iniciar_sesion(email: str, password: str) -> dict:
 
 
 def auth_actualizar_contrasena(access_token: str, password: str) -> dict:
-    respuesta = requests.put(
+    respuesta = _external_request("PUT",
         _auth_url("/user"), headers=_auth_headers(access_token),
         json={"password": password}, timeout=AUTH_TIMEOUT,
     )
@@ -444,7 +521,7 @@ def auth_actualizar_contrasena(access_token: str, password: str) -> dict:
 
 def auth_cerrar_sesion(access_token: str) -> None:
     identity_security.revoke_token(access_token)
-    requests.post(_auth_url("/logout"), headers=_auth_headers(access_token), timeout=AUTH_TIMEOUT)
+    _external_request("POST", _auth_url("/logout"), headers=_auth_headers(access_token), timeout=AUTH_TIMEOUT)
 
 
 def auth_obtener_usuario(access_token: str) -> dict:
@@ -461,7 +538,7 @@ def auth_obtener_usuario(access_token: str) -> dict:
 
 def consultar_dni_reniec(dni: str) -> dict:
     """Consulta nombres por DNI sin exponer el token del proveedor al navegador."""
-    respuesta = requests.get(
+    respuesta = _external_request("GET",
         "https://api.decolecta.com/v1/reniec/dni",
         params={"numero": dni},
         headers={"Authorization": f"Bearer {RENIEC_TOKEN}", "Accept": "application/json"},
@@ -527,15 +604,26 @@ def sesion_opcional(f):
     @wraps(f)
     def envoltura(*args, **kwargs):
         g.usuario = None
+        validacion_unificada = False
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer ") and _supabase_configurado():
             token = auth_header.removeprefix("Bearer ").strip()
-            if token and len(token) <= 8192 and not identity_security.token_revoked(token):
-                try:
-                    g.usuario = auth_obtener_usuario(token)
-                except Exception:
-                    g.usuario = None
-        if g.usuario and _acceso_bloqueado(g.usuario):
+            if token and len(token) <= 8192:
+                if isinstance(identity_security, SupabaseIdentitySecurity):
+                    validacion_unificada = True
+                    try:
+                        g.usuario, blocked = identity_security.authorize(token, SUPABASE_KEY)
+                    except ValueError:
+                        g.usuario = None
+                    else:
+                        if blocked:
+                            return _respuesta_acceso_bloqueado()
+                elif not identity_security.token_revoked(token):
+                    try:
+                        g.usuario = auth_obtener_usuario(token)
+                    except Exception:
+                        g.usuario = None
+        if g.usuario and not validacion_unificada and _acceso_bloqueado(g.usuario):
             return _respuesta_acceso_bloqueado()
         return f(*args, **kwargs)
     return envoltura
@@ -553,10 +641,13 @@ def sesion_requerida(f):
             token = auth_header.removeprefix("Bearer ").strip()
             if not token or len(token) > 8192:
                 return jsonify({"ok": False, "requiere_login": True, "error": "La sesión venció. Inicia sesión nuevamente."}), 401
-            if request.endpoint == "api_validar_direccion" and isinstance(identity_security, SupabaseIdentitySecurity):
+            if isinstance(identity_security, SupabaseIdentitySecurity):
                 try:
                     with measure_stage("seguridad"):
-                        g.usuario, blocked = identity_security.authorize_location(token, SUPABASE_KEY)
+                        authorize = (identity_security.authorize_location
+                                     if request.endpoint == "api_validar_direccion"
+                                     else identity_security.authorize)
+                        g.usuario, blocked = authorize(token, SUPABASE_KEY)
                 except ValueError:
                     return jsonify({"ok": False, "requiere_login": True,
                                     "error": "La sesión venció. Inicia sesión nuevamente."}), 401
@@ -933,12 +1024,15 @@ def _normalizar_texto(texto: str) -> str:
 
 
 def _consultar_sugerencias_direccion(texto: str, distrito: str = "") -> list:
-    respuesta = requests.get(
+    respuesta = _external_request("GET",
         "https://photon.komoot.io/api/",
         params={"q": f"{texto}, {distrito}, Lima, Peru", "limit": 30,
                 "lat": -12.085, "lon": -77.01, "zoom": 15,
                 "bbox": "-77.06,-12.14,-76.96,-12.04"},
-        headers={"User-Agent": "FarmaPulse/1.0", "Accept-Language": "es"}, timeout=8,
+        headers={"User-Agent": "FarmaPulse/1.0", "Accept-Language": "es"},
+        # Separo conexión y lectura. El timeout escalar anterior podía agotarse
+        # en ambas etapas y producir máximos cercanos a 16 segundos.
+        timeout=(3, 5),
     )
     respuesta.raise_for_status()
     datos = respuesta.json()
@@ -987,6 +1081,87 @@ def _consultar_sugerencias_direccion(texto: str, distrito: str = "") -> list:
     return sorted(sugerencias, key=lambda lugar: not lugar["direccion_precisa"])[:6]
 
 
+def _consultar_sugerencias_direccion_optimizado(texto: str, distrito: str = "") -> list:
+    """Evita consultas duplicadas a Photon y tolera fallos externos breves."""
+    if not ENABLE_SUGGESTIONS_CACHE:
+        return _consultar_sugerencias_direccion(texto, distrito)
+
+    clave = (_normalizar_texto(texto), _normalizar_texto(distrito))
+    ahora = time.monotonic()
+    lider = False
+    respaldo = None
+    with _SUGGESTIONS_CACHE_LOCK:
+        entrada = _SUGGESTIONS_CACHE.get(clave)
+        if entrada and entrada[0] > ahora:
+            return copy.deepcopy(list(entrada[2]))
+        if entrada and entrada[1] > ahora:
+            respaldo = entrada[2]
+
+        fallo_hasta = _SUGGESTIONS_FAILURES.get(clave, 0)
+        if fallo_hasta > ahora:
+            if respaldo is not None:
+                return copy.deepcopy(list(respaldo))
+            raise requests.RequestException("El geocodificador está temporalmente no disponible")
+
+        espera = _SUGGESTIONS_INFLIGHT.get(clave)
+        if espera is None:
+            espera = Event()
+            _SUGGESTIONS_INFLIGHT[clave] = espera
+            lider = True
+        elif respaldo is not None:
+            # Mientras un hilo renueva la entrada vencida, los demás reciben la
+            # última respuesta válida sin quedar en cola detrás de Photon.
+            return copy.deepcopy(list(respaldo))
+
+    if not lider:
+        if not espera.wait(SUGGESTIONS_WAIT_SECONDS):
+            raise requests.Timeout("Tiempo de espera agotado consultando el geocodificador")
+        with _SUGGESTIONS_CACHE_LOCK:
+            entrada = _SUGGESTIONS_CACHE.get(clave)
+            ahora = time.monotonic()
+            if entrada and entrada[1] > ahora:
+                return copy.deepcopy(list(entrada[2]))
+        raise requests.RequestException("El geocodificador está temporalmente no disponible")
+
+    try:
+        resultado = tuple(_consultar_sugerencias_direccion(texto, distrito))
+        with _SUGGESTIONS_CACHE_LOCK:
+            ahora = time.monotonic()
+            vencidas = [k for k, entrada in _SUGGESTIONS_CACHE.items() if entrada[1] <= ahora]
+            for k in vencidas:
+                _SUGGESTIONS_CACHE.pop(k, None)
+                _SUGGESTIONS_FAILURES.pop(k, None)
+            if len(_SUGGESTIONS_CACHE) >= SUGGESTIONS_CACHE_MAX_ENTRIES:
+                mas_antigua = min(_SUGGESTIONS_CACHE, key=lambda k: _SUGGESTIONS_CACHE[k][1])
+                _SUGGESTIONS_CACHE.pop(mas_antigua, None)
+                _SUGGESTIONS_FAILURES.pop(mas_antigua, None)
+            _SUGGESTIONS_CACHE[clave] = (
+                ahora + SUGGESTIONS_CACHE_SECONDS,
+                ahora + SUGGESTIONS_STALE_SECONDS,
+                resultado,
+            )
+            _SUGGESTIONS_FAILURES.pop(clave, None)
+        return copy.deepcopy(list(resultado))
+    except (requests.RequestException, ValueError):
+        with _SUGGESTIONS_CACHE_LOCK:
+            ahora = time.monotonic()
+            fallos_vencidos = [k for k, vence in _SUGGESTIONS_FAILURES.items() if vence <= ahora]
+            for k in fallos_vencidos:
+                _SUGGESTIONS_FAILURES.pop(k, None)
+            if len(_SUGGESTIONS_FAILURES) >= SUGGESTIONS_CACHE_MAX_ENTRIES:
+                fallo_mas_antiguo = min(_SUGGESTIONS_FAILURES, key=_SUGGESTIONS_FAILURES.get)
+                _SUGGESTIONS_FAILURES.pop(fallo_mas_antiguo, None)
+            _SUGGESTIONS_FAILURES[clave] = ahora + SUGGESTIONS_FAILURE_SECONDS
+        if respaldo is not None:
+            app.logger.warning("Photon falló; se devolvieron sugerencias recientes de respaldo")
+            return copy.deepcopy(list(respaldo))
+        raise
+    finally:
+        with _SUGGESTIONS_CACHE_LOCK:
+            _SUGGESTIONS_INFLIGHT.pop(clave, None)
+            espera.set()
+
+
 @app.route("/api/direcciones/sugerencias", methods=["POST"])
 @csrf.exempt
 @limiter.limit("20 per minute")
@@ -1000,7 +1175,7 @@ def api_sugerencias_direccion():
         distrito = body.get("distrito") or ""
         if distrito and distrito not in ZONA_DELIVERY:
             return jsonify({"ok": False, "error": "Selecciona un distrito de reparto"}), 400
-        sugerencias = _consultar_sugerencias_direccion(texto.strip(), distrito)
+        sugerencias = _consultar_sugerencias_direccion_optimizado(texto.strip(), distrito)
     except (requests.RequestException, ValueError):
         app.logger.warning("No se pudieron consultar sugerencias del geocodificador")
         return jsonify({"ok": False, "error": "No se pudo consultar el mapa abierto. Intenta nuevamente"}), 502
@@ -1180,7 +1355,7 @@ def api_checkout_pagar():
     })
     payload = crear_orden(orden["id"], total, email, cliente, token, method, payment_type, int(installments))
     try:
-        respuesta = requests.post("https://api.mercadopago.com/v1/orders",
+        respuesta = _external_request("POST", "https://api.mercadopago.com/v1/orders",
             headers={"Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}", "Content-Type": "application/json",
                      "X-Idempotency-Key": orden["id"]}, json=payload, timeout=20)
         datos = respuesta.json()
@@ -1275,7 +1450,7 @@ def api_checkout_estado(orden_id):
     if record["state"] != "pending" or not result or not result.get("orden_proveedor"):
         return jsonify(result or {"ok": False, "estado": "procesando"}), record["status"] or 202
     try:
-        response = requests.get(f"https://api.mercadopago.com/v1/orders/{result['orden_proveedor']}",
+        response = _external_request("GET", f"https://api.mercadopago.com/v1/orders/{result['orden_proveedor']}",
             headers={"Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}"}, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -1303,7 +1478,7 @@ def api_mercado_pago_webhook():
     if not hmac.compare_digest(expected, supplied):
         return jsonify({"ok": False}), 401
     try:
-        response = requests.get(f"https://api.mercadopago.com/v1/orders/{payment_id}",
+        response = _external_request("GET", f"https://api.mercadopago.com/v1/orders/{payment_id}",
             headers={"Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}"}, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -1461,8 +1636,10 @@ def api_auth_login():
     except requests.RequestException:
         return jsonify({"ok": False, "error": "No se pudo contactar el servicio de autenticación"}), 502
 
-    if _acceso_bloqueado(datos.get("user") or {"email": email}):
-        return _respuesta_acceso_bloqueado()
+    # Ya comprobé el correo antes de autenticar. Los bloqueos de identidad se
+    # registran también con ese correo, así que repetir una segunda consulta
+    # remota con el mismo identificador no aporta seguridad y sí duplica la
+    # latencia del login bajo carga.
     return jsonify({
         "ok": True,
         "usuario": datos.get("user"),
@@ -1515,7 +1692,7 @@ def api_auth_eliminar():
         return jsonify({"ok": False, "error": "No se pudo verificar la cuenta actual"}), 401
 
     try:
-        respuesta = requests.delete(
+        respuesta = _external_request("DELETE",
             f"{SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{usuario_id}",
             headers={
                 "apikey": SUPABASE_ADMIN_KEY,
@@ -1577,7 +1754,7 @@ def api_buscar():
             or (distrito and distrito not in ZONA_DELIVERY)):
         return jsonify({"ok": False, "error": "Selecciona una ubicación de nuestra zona de reparto"}), 400
 
-    resultados = buscar_en_farmacias(termino, farmacia_filtro=farmacia or None)
+    resultados = _buscar_en_farmacias_optimizado(termino, farmacia or None)
     for r in resultados:
         r.setdefault("id", str(uuid.uuid4()))
 

@@ -19,5 +19,19 @@ class ThreadLocalHTTP:
         finally:
             session.cookies.clear()
 
+    # Mantengo la misma interfaz mínima de ``requests`` para que los DAO puedan
+    # reutilizar el pool sin conocer si están en producción o en pruebas.
+    def get(self, url, **kwargs):
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self.request("POST", url, **kwargs)
+
+    def put(self, url, **kwargs):
+        return self.request("PUT", url, **kwargs)
+
+    def delete(self, url, **kwargs):
+        return self.request("DELETE", url, **kwargs)
+
 
 http_client = ThreadLocalHTTP()

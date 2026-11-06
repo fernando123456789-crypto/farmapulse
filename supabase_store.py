@@ -199,6 +199,13 @@ class SupabaseIdentitySecurity:
         })
 
     def authorize_location(self, token, public_key):
+        return self._authorize(token, public_key, "fp_location_access")
+
+    def authorize(self, token, public_key):
+        """Valida JWT, revocación y bloqueo en una sola RPC autenticada."""
+        return self._authorize(token, public_key, "fp_session_access")
+
+    def _authorize(self, token, public_key, rpc_name):
         # Solo leo estas referencias para calcular huellas, nunca para autorizar.
         # PostgREST verifica la firma y la caducidad antes de ejecutar la función.
         try:
@@ -214,7 +221,7 @@ class SupabaseIdentitySecurity:
             raise ValueError("Sesión inválida") from error
         try:
             response = http_client.request(
-                "POST", f"{self.rest.base}/rpc/fp_location_access",
+                "POST", f"{self.rest.base}/rpc/{rpc_name}",
                 headers={"apikey": public_key, "Authorization": f"Bearer {token}"},
                 json={"p_token_hash": self._keys({"sesion": token})[0],
                       "p_user_hash": self._keys({"usuario": user_id})[0],
@@ -224,7 +231,7 @@ class SupabaseIdentitySecurity:
             if response.status_code in (401, 403):
                 raise ValueError("Sesión inválida")
             if response.status_code >= 400:
-                raise StoreError("No se pudo comprobar el acceso de ubicación")
+                raise StoreError("No se pudo comprobar el acceso de sesión")
             data = response.json()
         except requests.RequestException as error:
             raise StoreError("No se pudo contactar al servicio de acceso") from error
