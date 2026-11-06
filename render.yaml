@@ -25,6 +25,8 @@ services:
         value: "1"
       - key: ENABLE_SEARCH_CACHE
         value: "1"
+      - key: ENABLE_SUGGESTIONS_CACHE
+        value: "1"
       - key: EMAIL_PROVIDER
         value: resend
       - key: SECRET_KEY

@@ -126,12 +126,24 @@ SUPABASE_ADMIN_KEY = (
 # sigan siendo sencillos y no se altere el entorno local.
 USE_POOLED_HTTP = os.getenv("USE_POOLED_HTTP", "").strip().lower() in {"1", "true", "yes"}
 ENABLE_SEARCH_CACHE = os.getenv("ENABLE_SEARCH_CACHE", "").strip().lower() in {"1", "true", "yes"}
+ENABLE_SUGGESTIONS_CACHE = os.getenv(
+    "ENABLE_SUGGESTIONS_CACHE", os.getenv("ENABLE_SEARCH_CACHE", "")
+).strip().lower() in {"1", "true", "yes"}
 SEARCH_CACHE_SECONDS = 30
 SEARCH_CACHE_WAIT_SECONDS = 30
 SEARCH_CACHE_MAX_ENTRIES = 256
 _SEARCH_CACHE = {}
 _SEARCH_CACHE_INFLIGHT = {}
 _SEARCH_CACHE_LOCK = Lock()
+SUGGESTIONS_CACHE_SECONDS = 60
+SUGGESTIONS_STALE_SECONDS = 300
+SUGGESTIONS_WAIT_SECONDS = 9
+SUGGESTIONS_FAILURE_SECONDS = 2
+SUGGESTIONS_CACHE_MAX_ENTRIES = 256
+_SUGGESTIONS_CACHE = {}
+_SUGGESTIONS_INFLIGHT = {}
+_SUGGESTIONS_FAILURES = {}
+_SUGGESTIONS_CACHE_LOCK = Lock()
 
 
 def _external_request(method, url, **kwargs):
@@ -1017,7 +1029,10 @@ def _consultar_sugerencias_direccion(texto: str, distrito: str = "") -> list:
         params={"q": f"{texto}, {distrito}, Lima, Peru", "limit": 30,
                 "lat": -12.085, "lon": -77.01, "zoom": 15,
                 "bbox": "-77.06,-12.14,-76.96,-12.04"},
-        headers={"User-Agent": "FarmaPulse/1.0", "Accept-Language": "es"}, timeout=8,
+        headers={"User-Agent": "FarmaPulse/1.0", "Accept-Language": "es"},
+        # Separo conexión y lectura. El timeout escalar anterior podía agotarse
+        # en ambas etapas y producir máximos cercanos a 16 segundos.
+        timeout=(3, 5),
     )
     respuesta.raise_for_status()
     datos = respuesta.json()
@@ -1066,6 +1081,87 @@ def _consultar_sugerencias_direccion(texto: str, distrito: str = "") -> list:
     return sorted(sugerencias, key=lambda lugar: not lugar["direccion_precisa"])[:6]
 
 
+def _consultar_sugerencias_direccion_optimizado(texto: str, distrito: str = "") -> list:
+    """Evita consultas duplicadas a Photon y tolera fallos externos breves."""
+    if not ENABLE_SUGGESTIONS_CACHE:
+        return _consultar_sugerencias_direccion(texto, distrito)
+
+    clave = (_normalizar_texto(texto), _normalizar_texto(distrito))
+    ahora = time.monotonic()
+    lider = False
+    respaldo = None
+    with _SUGGESTIONS_CACHE_LOCK:
+        entrada = _SUGGESTIONS_CACHE.get(clave)
+        if entrada and entrada[0] > ahora:
+            return copy.deepcopy(list(entrada[2]))
+        if entrada and entrada[1] > ahora:
+            respaldo = entrada[2]
+
+        fallo_hasta = _SUGGESTIONS_FAILURES.get(clave, 0)
+        if fallo_hasta > ahora:
+            if respaldo is not None:
+                return copy.deepcopy(list(respaldo))
+            raise requests.RequestException("El geocodificador está temporalmente no disponible")
+
+        espera = _SUGGESTIONS_INFLIGHT.get(clave)
+        if espera is None:
+            espera = Event()
+            _SUGGESTIONS_INFLIGHT[clave] = espera
+            lider = True
+        elif respaldo is not None:
+            # Mientras un hilo renueva la entrada vencida, los demás reciben la
+            # última respuesta válida sin quedar en cola detrás de Photon.
+            return copy.deepcopy(list(respaldo))
+
+    if not lider:
+        if not espera.wait(SUGGESTIONS_WAIT_SECONDS):
+            raise requests.Timeout("Tiempo de espera agotado consultando el geocodificador")
+        with _SUGGESTIONS_CACHE_LOCK:
+            entrada = _SUGGESTIONS_CACHE.get(clave)
+            ahora = time.monotonic()
+            if entrada and entrada[1] > ahora:
+                return copy.deepcopy(list(entrada[2]))
+        raise requests.RequestException("El geocodificador está temporalmente no disponible")
+
+    try:
+        resultado = tuple(_consultar_sugerencias_direccion(texto, distrito))
+        with _SUGGESTIONS_CACHE_LOCK:
+            ahora = time.monotonic()
+            vencidas = [k for k, entrada in _SUGGESTIONS_CACHE.items() if entrada[1] <= ahora]
+            for k in vencidas:
+                _SUGGESTIONS_CACHE.pop(k, None)
+                _SUGGESTIONS_FAILURES.pop(k, None)
+            if len(_SUGGESTIONS_CACHE) >= SUGGESTIONS_CACHE_MAX_ENTRIES:
+                mas_antigua = min(_SUGGESTIONS_CACHE, key=lambda k: _SUGGESTIONS_CACHE[k][1])
+                _SUGGESTIONS_CACHE.pop(mas_antigua, None)
+                _SUGGESTIONS_FAILURES.pop(mas_antigua, None)
+            _SUGGESTIONS_CACHE[clave] = (
+                ahora + SUGGESTIONS_CACHE_SECONDS,
+                ahora + SUGGESTIONS_STALE_SECONDS,
+                resultado,
+            )
+            _SUGGESTIONS_FAILURES.pop(clave, None)
+        return copy.deepcopy(list(resultado))
+    except (requests.RequestException, ValueError):
+        with _SUGGESTIONS_CACHE_LOCK:
+            ahora = time.monotonic()
+            fallos_vencidos = [k for k, vence in _SUGGESTIONS_FAILURES.items() if vence <= ahora]
+            for k in fallos_vencidos:
+                _SUGGESTIONS_FAILURES.pop(k, None)
+            if len(_SUGGESTIONS_FAILURES) >= SUGGESTIONS_CACHE_MAX_ENTRIES:
+                fallo_mas_antiguo = min(_SUGGESTIONS_FAILURES, key=_SUGGESTIONS_FAILURES.get)
+                _SUGGESTIONS_FAILURES.pop(fallo_mas_antiguo, None)
+            _SUGGESTIONS_FAILURES[clave] = ahora + SUGGESTIONS_FAILURE_SECONDS
+        if respaldo is not None:
+            app.logger.warning("Photon falló; se devolvieron sugerencias recientes de respaldo")
+            return copy.deepcopy(list(respaldo))
+        raise
+    finally:
+        with _SUGGESTIONS_CACHE_LOCK:
+            _SUGGESTIONS_INFLIGHT.pop(clave, None)
+            espera.set()
+
+
 @app.route("/api/direcciones/sugerencias", methods=["POST"])
 @csrf.exempt
 @limiter.limit("20 per minute")
@@ -1079,7 +1175,7 @@ def api_sugerencias_direccion():
         distrito = body.get("distrito") or ""
         if distrito and distrito not in ZONA_DELIVERY:
             return jsonify({"ok": False, "error": "Selecciona un distrito de reparto"}), 400
-        sugerencias = _consultar_sugerencias_direccion(texto.strip(), distrito)
+        sugerencias = _consultar_sugerencias_direccion_optimizado(texto.strip(), distrito)
     except (requests.RequestException, ValueError):
         app.logger.warning("No se pudieron consultar sugerencias del geocodificador")
         return jsonify({"ok": False, "error": "No se pudo consultar el mapa abierto. Intenta nuevamente"}), 502

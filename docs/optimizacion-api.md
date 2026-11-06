@@ -9,6 +9,7 @@
 | `POST /api/auth/login` | Se elimina una lectura de bloqueo redundante; permanece la comprobación previa al login. |
 | Sesiones autenticadas | Revocación, usuario y bloqueo pasan de tres viajes remotos a una RPC `fp_session_access`. |
 | Búsquedas repetidas | Una sola petición actualiza la caché; los demás hilos esperan el mismo resultado y evitan scraping duplicado. |
+| Sugerencias de dirección | Consultas idénticas comparten una sola llamada a Photon, se cachean 60 segundos y reutilizan el último resultado válido ante fallos breves. |
 
 La RPC unificada conserva la validación de firma y expiración del JWT, sesión activa,
 token revocado, correo confirmado y bloqueo de identidad. No se añadió una caché de
@@ -19,6 +20,12 @@ TCP/TLS para Supabase Auth, recetas, RENIEC, Photon y Mercado Pago. Gunicorn con
 un solo worker (compatible con el rate limit en memoria), pero pasa de 4 a 12 hilos;
 las operaciones son mayoritariamente espera de red y 20 VUs ya no quedan esperando
 solo cuatro huecos de ejecución.
+
+`POST /api/direcciones/sugerencias` conserva sus validaciones y su límite de
+peticiones. La llamada a Photon usa tiempos separados de conexión y lectura de 3 y
+5 segundos. Una respuesta permanece fresca durante 60 segundos y puede utilizarse
+como respaldo durante un máximo de cinco minutos si el proveedor externo falla.
+La caché vive solamente en la memoria del proceso y se vacía en cada despliegue.
 
 ## Migración aplicada
 
