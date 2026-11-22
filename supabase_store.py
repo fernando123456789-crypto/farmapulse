@@ -43,6 +43,9 @@ class SupabaseRest:
         self.base = f"{url}/rest/v1"
         self.timeout = timeout
         self.session = session if session is not None else http_client
+        # http_client ya controla los reintentos y el circuito: evita multiplicar
+        # el máximo de intentos con el bucle heredado de este adaptador.
+        self._uses_resilience_policy = self.session is http_client
         self.headers = {"apikey": service_key, "Content-Type": "application/json"}
         # Las claves antiguas (service_role) son JWT y también van en Authorization.
         # Las nuevas (sb_secret_...) no son JWT: solo se envían en `apikey`.
@@ -53,18 +56,19 @@ class SupabaseRest:
         headers = dict(self.headers)
         if prefer:
             headers["Prefer"] = prefer
-        for intento in range(retries + 1):
+        intentos_adicionales = 0 if self._uses_resilience_policy else retries
+        for intento in range(intentos_adicionales + 1):
             try:
                 respuesta = self.session.request(
                     method, f"{self.base}/{path}", params=params,
                     data=None if body is None else json.dumps(body), headers=headers, timeout=self.timeout,
                 )
             except requests.RequestException as error:
-                if intento < retries:
+                if intento < intentos_adicionales:
                     time.sleep(0.3)
                     continue
                 raise StoreError("No se pudo contactar a Supabase") from error
-            if respuesta.status_code >= 500 and intento < retries:
+            if respuesta.status_code >= 500 and intento < intentos_adicionales:
                 time.sleep(0.3)
                 continue
             if respuesta.status_code >= 400:
@@ -199,6 +203,13 @@ class SupabaseIdentitySecurity:
         })
 
     def authorize_location(self, token, public_key):
+        return self._authorize(token, public_key, "fp_location_access")
+
+    def authorize(self, token, public_key):
+        """Valida JWT, revocación y bloqueo en una sola RPC autenticada."""
+        return self._authorize(token, public_key, "fp_session_access")
+
+    def _authorize(self, token, public_key, rpc_name):
         # Solo leo estas referencias para calcular huellas, nunca para autorizar.
         # PostgREST verifica la firma y la caducidad antes de ejecutar la función.
         try:
@@ -214,7 +225,7 @@ class SupabaseIdentitySecurity:
             raise ValueError("Sesión inválida") from error
         try:
             response = http_client.request(
-                "POST", f"{self.rest.base}/rpc/fp_location_access",
+                "POST", f"{self.rest.base}/rpc/{rpc_name}",
                 headers={"apikey": public_key, "Authorization": f"Bearer {token}"},
                 json={"p_token_hash": self._keys({"sesion": token})[0],
                       "p_user_hash": self._keys({"usuario": user_id})[0],
@@ -224,7 +235,7 @@ class SupabaseIdentitySecurity:
             if response.status_code in (401, 403):
                 raise ValueError("Sesión inválida")
             if response.status_code >= 400:
-                raise StoreError("No se pudo comprobar el acceso de ubicación")
+                raise StoreError("No se pudo comprobar el acceso de sesión")
             data = response.json()
         except requests.RequestException as error:
             raise StoreError("No se pudo contactar al servicio de acceso") from error

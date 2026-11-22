@@ -95,6 +95,7 @@ class LocationPerformanceTests(CheckoutIdentityFixture, unittest.TestCase):
 class HTTPConnectionTests(unittest.TestCase):
     def test_reuses_connection_without_saving_tokens_or_cookies(self):
         session = Mock()
+        session.request.return_value.status_code = 200
         client = http_client.ThreadLocalHTTP()
         with patch.object(http_client.requests, "Session", return_value=session) as factory:
             for token in ("first-user", "second-user"):
@@ -112,7 +113,8 @@ class HTTPConnectionTests(unittest.TestCase):
         with patch.object(http_client.requests, "Session", return_value=session):
             with self.assertRaises(http_client.requests.ConnectionError):
                 http_client.ThreadLocalHTTP().request("GET", "https://example.supabase.co")
-        session.cookies.clear.assert_called_once()
+        self.assertEqual(session.request.call_count, 3)
+        self.assertEqual(session.cookies.clear.call_count, 3)
 
     def test_parallel_threads_do_not_share_sessions(self):
         barrier = Barrier(4)
@@ -124,7 +126,11 @@ class HTTPConnectionTests(unittest.TestCase):
             client.request("GET", "https://example.supabase.co")
             self.assertIs(first, client._local.session)
             return first
-        with patch.object(http_client.requests, "Session", side_effect=lambda: Mock()):
+        def nueva_sesion():
+            session = Mock()
+            session.request.return_value.status_code = 200
+            return session
+        with patch.object(http_client.requests, "Session", side_effect=nueva_sesion):
             with ThreadPoolExecutor(max_workers=4) as pool:
                 sessions = list(pool.map(consultar, range(4)))
         self.assertEqual(len({id(session) for session in sessions}), 4)

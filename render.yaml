@@ -10,7 +10,9 @@ services:
     # (workflow "Compruebo seguridad y regresiones"). Un push con pruebas fallidas no llega a producción.
     autoDeployTrigger: checksPass
     buildCommand: python -m pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60 app:app
+    # Las rutas bloquean esperando a Supabase, RENIEC y Mercado Pago. Más hilos
+    # permiten que 20 VUs no formen cola mientras se espera I/O, sin aumentar workers.
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 12 --timeout 60 app:app
     healthCheckPath: /healthz
     envVars:
       - key: APP_ENV
@@ -18,6 +20,12 @@ services:
       - key: STORAGE_BACKEND
         value: supabase
       - key: RATELIMIT_ALLOW_MEMORY
+        value: "1"
+      - key: USE_POOLED_HTTP
+        value: "1"
+      - key: ENABLE_SEARCH_CACHE
+        value: "1"
+      - key: ENABLE_SUGGESTIONS_CACHE
         value: "1"
       - key: EMAIL_PROVIDER
         value: resend

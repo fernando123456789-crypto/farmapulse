@@ -93,6 +93,7 @@ class DeliveryEndpointTests(CheckoutIdentityFixture, unittest.TestCase):
                 "type": kind, "name": name, "street": street, "housenumber": number,
             }}
         response = Mock()
+        response.status_code = 200
         response.json.return_value = {"features": [
             feature("city", "San Borja"), feature("house", "", "Las Artes", "999"),
             feature("street", "Las Artes"), feature("house", "", "Las Artes", "123"),

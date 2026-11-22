@@ -14,6 +14,9 @@ from email.message import EmailMessage
 
 import requests
 
+from http_client import http_client
+from resilience import CircuitOpenError
+
 RESEND_URL = "https://api.resend.com/emails"
 
 
@@ -54,9 +57,13 @@ def _enviar_resend(config, destino, asunto, texto, idempotency_key):
         # Evita un segundo correo si se reintenta el mismo comprobante (Resend lo recuerda 24 h).
         cabeceras["Idempotency-Key"] = idempotency_key[:256]
     try:
-        respuesta = requests.post(RESEND_URL, headers=cabeceras, timeout=15, json={
-            "from": config["resend_from"].strip(), "to": [destino], "subject": asunto, "text": texto})
-    except requests.RequestException as error:
+        respuesta = http_client.request_with_sender(
+            "POST", RESEND_URL, requests.post, headers=cabeceras, timeout=15, json={
+                "from": config["resend_from"].strip(), "to": [destino],
+                "subject": asunto, "text": texto,
+            },
+        )
+    except (requests.RequestException, CircuitOpenError) as error:
         raise MailError("No se pudo contactar a Resend") from error
     if respuesta.status_code >= 400:
         detalle = ""

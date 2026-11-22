@@ -27,6 +27,7 @@ class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
         verifier = self.real_merchant_verifier
         self.module._consultar_comercio_de_pruebas.cache_clear()
         with patch.object(self.module.requests, "get") as get:
+            get.return_value.status_code = 200
             get.return_value.json.return_value = {"site_id": "MPE", "tags": ["test_user"]}
             self.assertTrue(verifier("sandbox-token"))
             self.assertTrue(verifier("sandbox-token"))
@@ -135,14 +136,18 @@ class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
         self.assertFalse(self.pay().json["ok"])
         self.receipt.assert_not_called()
 
-    def test_timeout_does_not_retry_or_claim_rejection(self):
+    def test_timeout_retries_idempotent_request_without_claiming_rejection(self):
         self.payment.side_effect = self.module.requests.Timeout()
         self.assertEqual(self.pay().json["estado"], "sin_confirmar")
         self.pay()
         other = self.order()
         result = self.pay(token="b" * 32, orden_firma=other.json["orden_firma"])
         self.assertEqual(result.status_code, 409)
-        self.payment.assert_called_once()
+        self.assertEqual(self.payment.call_count, 3)
+        self.assertEqual(
+            {call.kwargs["headers"]["X-Idempotency-Key"] for call in self.payment.call_args_list},
+            {self.reference},
+        )
 
     def assert_invalid_result(self, field, value):
         self.payment.return_value.json.return_value[field] = value
@@ -242,6 +247,7 @@ class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
     def test_pending_challenge_is_confirmed_by_backend_status_query(self):
         self.pending_payment()
         response = Mock()
+        response.status_code = 200
         response.json.return_value = self.approved
         with patch.object(self.module.requests, "get", return_value=response) as provider:
             result = self.client.get(f"/api/checkout/estado/{self.reference}", headers=self.headers)
@@ -273,6 +279,7 @@ class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
     def test_signed_webhook_queries_provider_and_only_sends_one_receipt(self):
         self.pending_payment()
         response = Mock()
+        response.status_code = 200
         response.json.return_value = self.approved
         with patch.object(self.module, "MERCADO_PAGO_WEBHOOK_SECRET", "test-webhook-secret"), patch.object(self.module.requests, "get", return_value=response):
             self.assertEqual(self.webhook().status_code, 200)
@@ -283,6 +290,7 @@ class MercadoPagoTests(CheckoutIdentityFixture, unittest.TestCase):
     def test_webhook_body_is_not_used_as_payment_approval(self):
         self.pending_payment()
         response = Mock()
+        response.status_code = 200
         response.json.return_value = {**self.approved, "status": "failed"}
         with patch.object(self.module, "MERCADO_PAGO_WEBHOOK_SECRET", "test-webhook-secret"), patch.object(self.module.requests, "get", return_value=response):
             self.assertEqual(self.webhook().status_code, 200)

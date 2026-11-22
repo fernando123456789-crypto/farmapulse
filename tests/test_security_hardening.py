@@ -11,6 +11,7 @@ from cryptography.fernet import InvalidToken
 
 from identity_security import IdentitySecurity
 from payment_ledger import PaymentLedger
+from resilience import CircuitOpenError
 from test_identity_security import CheckoutIdentityFixture
 
 
@@ -89,6 +90,15 @@ class SecurityApiTests(CheckoutIdentityFixture, unittest.TestCase):
         for rule in ("object-src 'none'", "base-uri 'self'", "frame-ancestors 'none'"):
             self.assertIn(rule, policy)
         self.assertNotIn("'unsafe-inline'", policy)
+
+    def test_open_circuit_returns_a_retryable_service_unavailable(self):
+        with self.module.app.test_request_context('/api/test'):
+            response, status = self.module.manejar_circuito_abierto(
+                CircuitOpenError('photon.example', 4),
+            )
+        self.assertEqual(status, 503)
+        self.assertEqual(response.headers['Retry-After'], '4')
+        self.assertEqual(response.headers['X-Resilience-Circuit'], 'open')
 
     def test_unconfirmed_anonymous_and_invalid_users_are_rejected(self):
         for user in ({}, {'id': 'buyer', 'email': 'b@example.com'},
