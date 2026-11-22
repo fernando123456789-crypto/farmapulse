@@ -21,6 +21,10 @@ un solo worker (compatible con el rate limit en memoria), pero pasa de 4 a 12 hi
 las operaciones son mayoritariamente espera de red y 20 VUs ya no quedan esperando
 solo cuatro huecos de ejecución.
 
+Las llamadas que usan el cliente HTTP compartido también aplican reintentos
+idempotentes y circuit breaker. Los umbrales, el fallback `503`, las pruebas y los
+límites `429` están documentados en [Resiliencia y control de tráfico](resiliencia-api.md).
+
 `POST /api/direcciones/sugerencias` conserva sus validaciones y su límite de
 peticiones. La llamada a Photon usa tiempos separados de conexión y lectura de 3 y
 5 segundos. Una respuesta permanece fresca durante 60 segundos y puede utilizarse

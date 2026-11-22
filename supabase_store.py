@@ -43,6 +43,9 @@ class SupabaseRest:
         self.base = f"{url}/rest/v1"
         self.timeout = timeout
         self.session = session if session is not None else http_client
+        # http_client ya controla los reintentos y el circuito: evita multiplicar
+        # el máximo de intentos con el bucle heredado de este adaptador.
+        self._uses_resilience_policy = self.session is http_client
         self.headers = {"apikey": service_key, "Content-Type": "application/json"}
         # Las claves antiguas (service_role) son JWT y también van en Authorization.
         # Las nuevas (sb_secret_...) no son JWT: solo se envían en `apikey`.
@@ -53,18 +56,19 @@ class SupabaseRest:
         headers = dict(self.headers)
         if prefer:
             headers["Prefer"] = prefer
-        for intento in range(retries + 1):
+        intentos_adicionales = 0 if self._uses_resilience_policy else retries
+        for intento in range(intentos_adicionales + 1):
             try:
                 respuesta = self.session.request(
                     method, f"{self.base}/{path}", params=params,
                     data=None if body is None else json.dumps(body), headers=headers, timeout=self.timeout,
                 )
             except requests.RequestException as error:
-                if intento < retries:
+                if intento < intentos_adicionales:
                     time.sleep(0.3)
                     continue
                 raise StoreError("No se pudo contactar a Supabase") from error
-            if respuesta.status_code >= 500 and intento < retries:
+            if respuesta.status_code >= 500 and intento < intentos_adicionales:
                 time.sleep(0.3)
                 continue
             if respuesta.status_code >= 400:

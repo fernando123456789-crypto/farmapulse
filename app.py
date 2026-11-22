@@ -58,6 +58,7 @@ from mailer import MailError, correo_configurado, enviar_correo
 from supabase_store import (StoreError, SupabaseIdentitySecurity, SupabasePaymentLedger, SupabaseRest)
 from delivery_location import district_for_point
 from http_client import http_client
+from resilience import CircuitOpenError
 from request_timing import measure_stage, register_location_timing
 from payment_ledger import PaymentLedger
 import admin_panel
@@ -149,7 +150,9 @@ _SUGGESTIONS_CACHE_LOCK = Lock()
 def _external_request(method, url, **kwargs):
     if USE_POOLED_HTTP:
         return http_client.request(method, url, **kwargs)
-    return getattr(requests, method.lower())(url, **kwargs)
+    return http_client.request_with_sender(
+        method, url, getattr(requests, method.lower()), **kwargs,
+    )
 
 
 def _buscar_en_farmacias_optimizado(termino: str, farmacia_filtro: str | None) -> list:
@@ -224,6 +227,17 @@ def manejar_error_almacenamiento(error):
     # Detalle solo en el registro del servidor; el cliente recibe un mensaje genérico.
     app.logger.error("Almacenamiento en Supabase no disponible: %s", error)
     return jsonify({"ok": False, "error": "El servicio de registro no está disponible. Intenta nuevamente en unos minutos"}), 503
+
+
+@app.errorhandler(CircuitOpenError)
+def manejar_circuito_abierto(error):
+    respuesta = jsonify({
+        "ok": False,
+        "error": "Un servicio externo está temporalmente no disponible. Intenta nuevamente más tarde.",
+    })
+    respuesta.headers["Retry-After"] = str(error.retry_after)
+    respuesta.headers["X-Resilience-Circuit"] = "open"
+    return respuesta, 503
 
 
 @app.errorhandler(sqlite3.Error)
@@ -342,7 +356,7 @@ def _pagos_configurados():
 
 @lru_cache(maxsize=4)
 def _consultar_comercio_de_pruebas(access_token, periodo):
-    respuesta = requests.get("https://api.mercadopago.com/users/me",
+    respuesta = _external_request("GET", "https://api.mercadopago.com/users/me",
         headers={"Authorization": f"Bearer {access_token}"}, timeout=5)
     respuesta.raise_for_status()
     datos = respuesta.json()
