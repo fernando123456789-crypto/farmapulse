@@ -145,7 +145,7 @@ class MifarmaScraper(ScraperFarmacia):
                                 "Chrome/124.0.0.0 Safari/537.36"),
             },
             data=json.dumps(payload),
-            timeout=15,
+            timeout=(3, 5),
         )
         respuesta.raise_for_status()
         datos = respuesta.json()

@@ -16,6 +16,7 @@ import hmac
 import json
 import time
 from datetime import datetime, timezone
+from threading import Event, Lock
 
 import requests
 
@@ -192,9 +193,13 @@ class SupabasePaymentLedger(LedgerBase):
 class SupabaseIdentitySecurity:
     MAX_FAILURES = 5
 
-    def __init__(self, rest, secret):
+    def __init__(self, rest, secret, cache_ttl=0):
         self.rest = rest
         self.secret = secret.encode("utf-8")
+        self._cache_ttl = max(0.0, float(cache_ttl))
+        self._auth_cache = {}
+        self._auth_inflight = {}
+        self._auth_lock = Lock()
 
     def _keys(self, identifiers):
         return sorted({
@@ -210,48 +215,84 @@ class SupabaseIdentitySecurity:
         return self._authorize(token, public_key, "fp_session_access")
 
     def _authorize(self, token, public_key, rpc_name):
-        # Solo leo estas referencias para calcular huellas, nunca para autorizar.
-        # PostgREST verifica la firma y la caducidad antes de ejecutar la función.
         try:
             parts = token.split(".")
             if len(parts) != 3:
                 raise ValueError
             claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
             user_id, email = claims["sub"], claims["email"]
+            jwt_exp = claims.get("exp") if isinstance(claims.get("exp"), (int, float)) else None
             if (not isinstance(user_id, str) or not 1 <= len(user_id) <= 64
                     or not isinstance(email, str) or not 1 <= len(email) <= 254):
                 raise ValueError
         except (ValueError, KeyError, TypeError, UnicodeError, binascii.Error) as error:
             raise ValueError("Sesión inválida") from error
+
+        token_hash = self._keys({"sesion": token})[0]
+        leader = False
+        wait_event = None
+        if self._cache_ttl > 0:
+            now_mono, now_wall = time.monotonic(), time.time()
+            with self._auth_lock:
+                cached = self._auth_cache.get(token_hash)
+                if cached and cached[0] > now_mono and (cached[3] is None or cached[3] > now_wall):
+                    return dict(cached[1]), cached[2]
+                wait_event = self._auth_inflight.get(token_hash)
+                if wait_event is None:
+                    wait_event = Event()
+                    self._auth_inflight[token_hash] = wait_event
+                    leader = True
+            if not leader:
+                wait_event.wait(self.rest.timeout)
+                now_mono, now_wall = time.monotonic(), time.time()
+                with self._auth_lock:
+                    cached = self._auth_cache.get(token_hash)
+                    if cached and cached[0] > now_mono and (cached[3] is None or cached[3] > now_wall):
+                        return dict(cached[1]), cached[2]
+
         try:
-            response = http_client.request(
-                "POST", f"{self.rest.base}/rpc/{rpc_name}",
-                headers={"apikey": public_key, "Authorization": f"Bearer {token}"},
-                json={"p_token_hash": self._keys({"sesion": token})[0],
-                      "p_user_hash": self._keys({"usuario": user_id})[0],
-                      "p_email_hash": self._keys({"correo": email.strip().lower()})[0]},
-                timeout=self.rest.timeout,
-            )
-            if response.status_code in (401, 403):
+            try:
+                response = http_client.request(
+                    "POST", f"{self.rest.base}/rpc/{rpc_name}",
+                    headers={"apikey": public_key, "Authorization": f"Bearer {token}"},
+                    json={"p_token_hash": token_hash,
+                          "p_user_hash": self._keys({"usuario": user_id})[0],
+                          "p_email_hash": self._keys({"correo": email.strip().lower()})[0]},
+                    timeout=self.rest.timeout,
+                )
+                if response.status_code in (401, 403):
+                    raise ValueError("Sesión inválida")
+                if response.status_code >= 400:
+                    raise StoreError("No se pudo comprobar el acceso de sesión")
+                data = response.json()
+            except requests.RequestException as error:
+                raise StoreError("No se pudo contactar al servicio de acceso") from error
+            if (not isinstance(data, dict) or not isinstance(data.get("estado"), str)
+                    or data["estado"] not in {"valida", "bloqueada"}):
                 raise ValueError("Sesión inválida")
-            if response.status_code >= 400:
-                raise StoreError("No se pudo comprobar el acceso de sesión")
-            data = response.json()
-        except requests.RequestException as error:
-            raise StoreError("No se pudo contactar al servicio de acceso") from error
-        if (not isinstance(data, dict) or not isinstance(data.get("estado"), str)
-                or data["estado"] not in {"valida", "bloqueada"}):
-            raise ValueError("Sesión inválida")
-        user = data.get("usuario")
-        if (not isinstance(user, dict) or user.get("id") != user_id
-                or not isinstance(user.get("email"), str)
-                or user["email"].strip().lower() != email.strip().lower()
-                or not user.get("email_confirmed_at") or user.get("is_anonymous")):
-            raise ValueError("Sesión inválida")
-        return user, data["estado"] == "bloqueada"
+            user = data.get("usuario")
+            if (not isinstance(user, dict) or user.get("id") != user_id
+                    or not isinstance(user.get("email"), str)
+                    or user["email"].strip().lower() != email.strip().lower()
+                    or not user.get("email_confirmed_at") or user.get("is_anonymous")):
+                raise ValueError("Sesión inválida")
+            blocked = data["estado"] == "bloqueada"
+            if self._cache_ttl > 0:
+                with self._auth_lock:
+                    if len(self._auth_cache) >= 512:
+                        self._auth_cache.clear()
+                    self._auth_cache[token_hash] = (time.monotonic() + self._cache_ttl, dict(user), blocked, jwt_exp)
+            return user, blocked
+        finally:
+            if leader and wait_event is not None:
+                with self._auth_lock:
+                    self._auth_inflight.pop(token_hash, None)
+                    wait_event.set()
 
     def revoke_token(self, token):
         key = self._keys({"sesion": token})[0]
+        with self._auth_lock:
+            self._auth_cache.pop(key, None)
         self.rest.rpc("fp_revoke_token", {"p_token_hash": key, "p_ttl_seconds": 30 * 86400})
 
     def token_revoked(self, token):
@@ -275,4 +316,7 @@ class SupabaseIdentitySecurity:
     def record_failure(self, identifiers):
         r = self.rest.rpc("fp_identity_record_failure",
                           {"p_keys": self._keys(identifiers), "p_max": self.MAX_FAILURES})
+        if r.get("blocked"):
+            with self._auth_lock:
+                self._auth_cache.clear()
         return {"blocked": bool(r["blocked"]), "remaining": int(r["remaining"])}

@@ -12,7 +12,7 @@ services:
     buildCommand: python -m pip install -r requirements.txt
     # Las rutas bloquean esperando a Supabase, RENIEC y Mercado Pago. Más hilos
     # permiten que 20 VUs no formen cola mientras se espera I/O, sin aumentar workers.
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 12 --timeout 60 app:app
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 24 --timeout 60 app:app
     healthCheckPath: /healthz
     envVars:
       - key: APP_ENV

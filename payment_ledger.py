@@ -8,6 +8,7 @@ import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
+from threading import Lock
 from cryptography.fernet import Fernet
 
 
@@ -19,6 +20,8 @@ class LedgerBase:
         self.cipher = Fernet(base64.urlsafe_b64encode(hmac.new(
             self.secret, b"farmapulse-payment-context-v1", hashlib.sha256,
         ).digest()))
+        self._admin_row_cache = {}
+        self._admin_row_lock = Lock()
 
     def _encrypt_context(self, order_id, context):
         envelope = json.dumps({"order_id": order_id, "data": context}).encode()
@@ -35,6 +38,11 @@ class LedgerBase:
 
     def _fila_admin(self, order_id, state, encrypted_context, created_at):
         """Una orden en el formato del panel. No devuelve DNI ni dirección."""
+        clave = (order_id, state, encrypted_context, created_at)
+        with self._admin_row_lock:
+            cacheada = self._admin_row_cache.get(clave)
+        if cacheada is not None:
+            return cacheada
         legible = True
         try:
             context = self._decrypt_context(order_id, encrypted_context) if encrypted_context else {}
@@ -44,15 +52,13 @@ class LedgerBase:
             context, legible = {}, False
         cliente = context.get("cliente") if isinstance(context.get("cliente"), dict) else {}
         productos = context.get("productos") if isinstance(context.get("productos"), list) else []
-        return {
+        fila = {
             "id": order_id,
             "created_at": created_at,
             "estado": state,
             "legible": legible,
             "email": str(context.get("email") or ""),
             "cliente": str(cliente.get("nombre") or ""),
-            # Cada línea del carrito es un empaque: el subtotal es la suma de sus precios
-            # sin multiplicar por cantidad, por eso cada línea cuenta como 1 unidad.
             "productos": [{
                 "nombre": str(p.get("medicamento") or p.get("nombre") or "Producto"),
                 "presentacion": str(p.get("presentacion") or ""),
@@ -64,6 +70,12 @@ class LedgerBase:
             "delivery": str(context.get("delivery") or "0"),
             "total": str(context.get("total") or "0"),
         }
+        with self._admin_row_lock:
+            if len(self._admin_row_cache) >= 2000:
+                self._admin_row_cache.clear()
+            self._admin_row_cache[clave] = fila
+        return fila
+    
 
 
 class PaymentLedger(LedgerBase):

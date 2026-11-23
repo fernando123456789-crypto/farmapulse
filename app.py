@@ -125,12 +125,22 @@ SUPABASE_ADMIN_KEY = (
 # En Render, reutilizo conexiones TCP/TLS a proveedores. Se mantiene apagado
 # por defecto en desarrollo para que los dobles de prueba de ``requests``
 # sigan siendo sencillos y no se altere el entorno local.
-USE_POOLED_HTTP = os.getenv("USE_POOLED_HTTP", "").strip().lower() in {"1", "true", "yes"}
-ENABLE_SEARCH_CACHE = os.getenv("ENABLE_SEARCH_CACHE", "").strip().lower() in {"1", "true", "yes"}
+_default_opt = "1" if _produccion else "0"
+USE_POOLED_HTTP = os.getenv("USE_POOLED_HTTP", _default_opt).strip().lower() in {"1", "true", "yes"}
+ENABLE_SEARCH_CACHE = os.getenv("ENABLE_SEARCH_CACHE", _default_opt).strip().lower() in {"1", "true", "yes"}
 ENABLE_SUGGESTIONS_CACHE = os.getenv(
-    "ENABLE_SUGGESTIONS_CACHE", os.getenv("ENABLE_SEARCH_CACHE", "")
+    "ENABLE_SUGGESTIONS_CACHE", os.getenv("ENABLE_SEARCH_CACHE", _default_opt)
 ).strip().lower() in {"1", "true", "yes"}
-SEARCH_CACHE_SECONDS = 30
+SEARCH_CACHE_SECONDS = 300
+_BUSCAR_RESP_CACHE = {}
+_BUSCAR_RESP_LOCK = Lock()
+_READ_CACHE_SECONDS = 15
+_ADMIN_COMPRAS_CACHE = {}
+_ADMIN_COMPRAS_INFLIGHT = {}
+_ADMIN_COMPRAS_LOCK = Lock()
+_HISTORIAL_CACHE = {}
+_HISTORIAL_INFLIGHT = {}
+_HISTORIAL_LOCK = Lock()
 SEARCH_CACHE_WAIT_SECONDS = 30
 SEARCH_CACHE_MAX_ENTRIES = 256
 _SEARCH_CACHE = {}
@@ -206,7 +216,11 @@ STORAGE_BACKEND = (os.getenv("STORAGE_BACKEND") or ("supabase" if _produccion el
 if STORAGE_BACKEND == "supabase":
     # La clave secreta se usa solo aquí, en el servidor; nunca se envía al navegador.
     _supabase_rest = SupabaseRest(SUPABASE_URL, SUPABASE_ADMIN_KEY)
-    identity_security = SupabaseIdentitySecurity(_supabase_rest, os.getenv("IDENTITY_SECURITY_KEY") or SECRET_KEY)
+    identity_security = SupabaseIdentitySecurity(
+        _supabase_rest,
+        os.getenv("IDENTITY_SECURITY_KEY") or SECRET_KEY,
+        cache_ttl=15 if _produccion else 0,
+    )
     payment_ledger = SupabasePaymentLedger(_supabase_rest, SECRET_KEY)
 elif STORAGE_BACKEND == "sqlite":
     if _produccion:
@@ -869,6 +883,45 @@ def panel_administrador():
     respuesta.headers["X-Robots-Tag"] = "noindex, nofollow"
     return respuesta
 
+def _invalidar_cache_admin():
+    with _ADMIN_COMPRAS_LOCK:
+        _ADMIN_COMPRAS_CACHE.clear()
+
+
+def _admin_list_cacheado(desde_utc, hasta_utc):
+    if not _produccion:
+        return payment_ledger.admin_list(desde_utc, hasta_utc)
+    clave = (desde_utc, hasta_utc)
+    ahora = time.monotonic()
+    lider = False
+    with _ADMIN_COMPRAS_LOCK:
+        entrada = _ADMIN_COMPRAS_CACHE.get(clave)
+        if entrada and entrada[0] > ahora:
+            return entrada[1]
+        espera = _ADMIN_COMPRAS_INFLIGHT.get(clave)
+        if espera is None:
+            espera = Event()
+            _ADMIN_COMPRAS_INFLIGHT[clave] = espera
+            lider = True
+    if not lider:
+        espera.wait(10)
+        with _ADMIN_COMPRAS_LOCK:
+            entrada = _ADMIN_COMPRAS_CACHE.get(clave)
+            if entrada and entrada[0] > time.monotonic():
+                return entrada[1]
+        return payment_ledger.admin_list(desde_utc, hasta_utc)
+    try:
+        ordenes = payment_ledger.admin_list(desde_utc, hasta_utc)
+        with _ADMIN_COMPRAS_LOCK:
+            if len(_ADMIN_COMPRAS_CACHE) >= 32:
+                _ADMIN_COMPRAS_CACHE.clear()
+            _ADMIN_COMPRAS_CACHE[clave] = (time.monotonic() + _READ_CACHE_SECONDS, ordenes)
+        return ordenes
+    finally:
+        with _ADMIN_COMPRAS_LOCK:
+            _ADMIN_COMPRAS_INFLIGHT.pop(clave, None)
+            espera.set()
+
 
 @app.route("/api/admin/compras", methods=["GET"])
 @limiter.limit("60 per minute")
@@ -880,7 +933,7 @@ def api_admin_compras():
     except admin_panel.ParametrosInvalidos as error:
         return jsonify({"ok": False, "error": str(error)}), 400
     desde_utc, hasta_utc = admin_panel.rango_utc(parametros["desde"], parametros["hasta"])
-    ordenes = payment_ledger.admin_list(desde_utc, hasta_utc)
+    ordenes = _admin_list_cacheado(desde_utc, hasta_utc)
     respuesta = jsonify(admin_panel.construir_panel(ordenes, parametros))
     respuesta.headers["Cache-Control"] = "no-store"
     return respuesta
@@ -1395,6 +1448,8 @@ def _pago_sin_confirmar(orden_id):
 
 
 def _procesar_resultado_mercado_pago(orden_id, datos):
+    _invalidar_cache_admin()
+
     record = payment_ledger.get(orden_id)
     if not record or not record["context"]:
         return jsonify({"ok": False, "error": "La orden no existe"}), 404
@@ -1768,6 +1823,13 @@ def api_buscar():
             or (distrito and distrito not in ZONA_DELIVERY)):
         return jsonify({"ok": False, "error": "Selecciona una ubicación de nuestra zona de reparto"}), 400
 
+    clave_resp = (termino, departamento, provincia, distrito, farmacia)
+    if ENABLE_SEARCH_CACHE:
+        with _BUSCAR_RESP_LOCK:
+            entrada_resp = _BUSCAR_RESP_CACHE.get(clave_resp)
+            if entrada_resp and entrada_resp[0] > time.monotonic():
+                return jsonify(entrada_resp[1])
+
     resultados = _buscar_en_farmacias_optimizado(termino, farmacia or None)
     for r in resultados:
         r.setdefault("id", str(uuid.uuid4()))
@@ -1787,7 +1849,7 @@ def api_buscar():
             except (KeyError, TypeError, ValueError, InvalidOperation):
                 producto.pop("cotizacion", None)
 
-    return jsonify({
+    cuerpo = {
         "ok": True,
         "fuente": fuente,
         "farmacias_consultadas": nombres_farmacias_activas(),
@@ -1795,7 +1857,14 @@ def api_buscar():
         "ahorro_maximo": ahorro_maximo,
         "resultados": resultados_ordenados,
         "consultado_en": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    if ENABLE_SEARCH_CACHE and fuente == "farmacias":
+        with _BUSCAR_RESP_LOCK:
+            if len(_BUSCAR_RESP_CACHE) >= SEARCH_CACHE_MAX_ENTRIES:
+                _BUSCAR_RESP_CACHE.clear()
+            _BUSCAR_RESP_CACHE[clave_resp] = (time.monotonic() + SEARCH_CACHE_SECONDS, cuerpo)
+
+    return jsonify(cuerpo)
 
 
 @app.route("/api/receta/guardar", methods=["POST"])
@@ -1858,10 +1927,46 @@ def api_receta_guardar():
     token = request.headers["Authorization"].removeprefix("Bearer ").strip() if _supabase_configurado() else None
     try:
         fuente, data = receta_dao.guardar(registro, token)
+        with _HISTORIAL_LOCK:
+            _HISTORIAL_CACHE.pop(usuario_id, None)
     except RecetaDAOError:
         app.logger.warning("No se pudo guardar la receta con la sesión del usuario")
         return jsonify({"ok": False, "error": "No se pudo guardar la receta. Intenta nuevamente."}), 502
     return jsonify({"ok": True, "fuente": fuente, "data": data})
+
+
+def _listar_recetas_cacheado(usuario_id, token):
+    if not _produccion:
+        return receta_dao.listar_por_usuario(usuario_id, token)
+    ahora = time.monotonic()
+    lider = False
+    with _HISTORIAL_LOCK:
+        entrada = _HISTORIAL_CACHE.get(usuario_id)
+        if entrada and entrada[0] > ahora:
+            return entrada[1]
+        espera = _HISTORIAL_INFLIGHT.get(usuario_id)
+        if espera is None:
+            espera = Event()
+            _HISTORIAL_INFLIGHT[usuario_id] = espera
+            lider = True
+    if not lider:
+        espera.wait(AUTH_TIMEOUT)
+        with _HISTORIAL_LOCK:
+            entrada = _HISTORIAL_CACHE.get(usuario_id)
+            if entrada and entrada[0] > time.monotonic():
+                return entrada[1]
+        return receta_dao.listar_por_usuario(usuario_id, token)
+    try:
+        resultado = receta_dao.listar_por_usuario(usuario_id, token)
+        with _HISTORIAL_LOCK:
+            if len(_HISTORIAL_CACHE) >= 256:
+                _HISTORIAL_CACHE.clear()
+            _HISTORIAL_CACHE[usuario_id] = (time.monotonic() + _READ_CACHE_SECONDS, resultado)
+        return resultado
+    finally:
+        with _HISTORIAL_LOCK:
+            _HISTORIAL_INFLIGHT.pop(usuario_id, None)
+            espera.set()
 
 
 @app.route("/api/receta/historial", methods=["GET"])
@@ -1872,12 +1977,11 @@ def api_receta_historial():
 
     token = request.headers["Authorization"].removeprefix("Bearer ").strip() if _supabase_configurado() else None
     try:
-        fuente, data = receta_dao.listar_por_usuario(usuario_id, token)
+        fuente, data = _listar_recetas_cacheado(usuario_id, token)
     except RecetaDAOError:
         app.logger.warning("No se pudo consultar el historial con la sesión del usuario")
         return jsonify({"ok": False, "error": "No se pudo consultar el historial. Intenta nuevamente."}), 502
     return jsonify({"ok": True, "fuente": fuente, "data": data})
-
 
 # ---------------------------------------------------------------------------
 # Manejo de errores
