@@ -58,7 +58,7 @@ from mailer import MailError, correo_configurado, enviar_correo
 from supabase_store import (StoreError, SupabaseIdentitySecurity, SupabasePaymentLedger, SupabaseRest)
 from delivery_location import district_for_point
 from http_client import http_client
-from resilience import CircuitOpenError
+from resilience import CircuitOpenError, ResiliencePolicy
 from request_timing import measure_stage, register_location_timing
 from payment_ledger import PaymentLedger
 import admin_panel
@@ -334,7 +334,12 @@ def proteger_solicitudes_api():
             return jsonify({"ok": False, "error": "Origen de la solicitud no permitido"}), 403
         if request.headers.get("Sec-Fetch-Site") == "cross-site":
             return jsonify({"ok": False, "error": "Origen de la solicitud no permitido"}), 403
-        if not request.is_json and request.endpoint != "api_auth_logout":
+        endpoints_sin_cuerpo = {
+            "api_auth_logout",
+            "api_resilience_demo_reset",
+            "api_resilience_demo_llamada",
+        }
+        if not request.is_json and request.endpoint not in endpoints_sin_cuerpo:
             return jsonify({"ok": False, "error": "Envía la solicitud como JSON"}), 415
 
 RENIEC_TOKEN = os.getenv("RENIEC_TOKEN", "").strip()
@@ -351,6 +356,102 @@ MAIL_FROM = (os.getenv("MAIL_FROM") or MAIL_USERNAME).strip()
 EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "").strip().lower()
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 RESEND_FROM = os.getenv("RESEND_FROM", "").strip()
+
+# Demostración controlada del circuit breaker. Está deshabilitada por defecto,
+# no usa proveedores reales y exige una clave independiente configurada en Render.
+_RESILIENCE_DEMO_SERVICE = "demo-provider.farmapulse.invalid"
+_RESILIENCE_DEMO_URL = f"https://{_RESILIENCE_DEMO_SERVICE}/operacion"
+_resilience_demo_policy = ResiliencePolicy(
+    max_attempts=1, failure_threshold=5, reset_timeout=30,
+)
+_RESILIENCE_DEMO_LOCK = Lock()
+_RESILIENCE_DEMO_STATE = {"mode": "NORMAL", "provider_calls": 0}
+
+
+def _resilience_demo_guard():
+    enabled = os.getenv("RESILIENCE_DEMO_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+    if not enabled:
+        return jsonify({"ok": False, "error": "Recurso no encontrado"}), 404
+    expected = os.getenv("RESILIENCE_DEMO_KEY", "")
+    supplied = request.headers.get("X-Resilience-Demo-Key", "")
+    if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+        return jsonify({"ok": False, "error": "Acceso no autorizado"}), 403
+    return None
+
+
+def _resilience_demo_provider():
+    with _RESILIENCE_DEMO_LOCK:
+        _RESILIENCE_DEMO_STATE["provider_calls"] += 1
+        mode = _RESILIENCE_DEMO_STATE["mode"]
+    response = requests.Response()
+    response.status_code = 503 if mode == "FALLA" else 200
+    response.headers["Content-Type"] = "application/json"
+    return response
+
+
+@app.route("/api/resilience/demo/reset", methods=["POST"])
+@csrf.exempt
+@limiter.exempt
+def api_resilience_demo_reset():
+    denied = _resilience_demo_guard()
+    if denied:
+        return denied
+    _resilience_demo_policy.reset(_RESILIENCE_DEMO_SERVICE)
+    with _RESILIENCE_DEMO_LOCK:
+        _RESILIENCE_DEMO_STATE.update(mode="NORMAL", provider_calls=0)
+    return jsonify({"ok": True, "mode": "NORMAL", "state": "closed"})
+
+
+@app.route("/api/resilience/demo/estado", methods=["GET"])
+@limiter.exempt
+def api_resilience_demo_estado():
+    denied = _resilience_demo_guard()
+    if denied:
+        return denied
+    state = _resilience_demo_policy.snapshot(_RESILIENCE_DEMO_SERVICE)
+    with _RESILIENCE_DEMO_LOCK:
+        state.update(mode=_RESILIENCE_DEMO_STATE["mode"],
+                     provider_calls=_RESILIENCE_DEMO_STATE["provider_calls"])
+    return jsonify({"ok": True, **state})
+
+
+@app.route("/api/resilience/demo/modo", methods=["PUT"])
+@csrf.exempt
+@limiter.exempt
+def api_resilience_demo_modo():
+    denied = _resilience_demo_guard()
+    if denied:
+        return denied
+    body = request.get_json(silent=True) or {}
+    mode = body.get("modo") if isinstance(body, dict) else None
+    if mode not in {"FALLA", "NORMAL"}:
+        return jsonify({"ok": False, "error": "El modo debe ser FALLA o NORMAL"}), 400
+    with _RESILIENCE_DEMO_LOCK:
+        _RESILIENCE_DEMO_STATE["mode"] = mode
+    return jsonify({"ok": True, "mode": mode})
+
+
+@app.route("/api/resilience/demo/llamada", methods=["POST"])
+@csrf.exempt
+@limiter.exempt
+def api_resilience_demo_llamada():
+    denied = _resilience_demo_guard()
+    if denied:
+        return denied
+    response = _resilience_demo_policy.request(
+        "POST", _RESILIENCE_DEMO_URL, _resilience_demo_provider,
+    )
+    if response.status_code >= 500:
+        return jsonify({
+            "ok": False,
+            "error": "El proveedor controlado respondió con un fallo transitorio",
+            "provider_called": True,
+        }), 502
+    return jsonify({
+        "ok": True,
+        "message": "El proveedor controlado respondió correctamente",
+        "provider_called": True,
+    })
 
 
 def _config_correo():

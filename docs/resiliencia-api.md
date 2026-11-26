@@ -70,6 +70,24 @@ Los casos comprueban backoff y jitter, no reintentar validaciones ni operaciones
 
 3. **Reporte de mantenimiento.** Registra fecha, versión desplegada, endpoint, proveedor afectado, transición de circuito, cantidad de `429`/`503` y resultado de la recuperación. Compara tasas y latencias p95 antes y después con el mismo conjunto de solicitudes; no uses datos reales de pagos ni credenciales productivas.
 
+## Demostración controlada en Render y Postman
+
+El entorno de desarrollo puede exponer temporalmente una demostración que usa la misma clase
+`ResiliencePolicy` sin llamar a Supabase, Mercado Pago, RENIEC, Photon ni las farmacias reales.
+Se habilita en Render con `RESILIENCE_DEMO_ENABLED=1` y una clave privada en
+`RESILIENCE_DEMO_KEY`. Todas las solicitudes deben enviar esa clave mediante
+`X-Resilience-Demo-Key`.
+
+La secuencia es: reiniciar con `POST /api/resilience/demo/reset`, comprobar `closed` en
+`GET /api/resilience/demo/estado`, seleccionar `FALLA` mediante
+`PUT /api/resilience/demo/modo`, ejecutar cinco veces `POST /api/resilience/demo/llamada` y
+comprobar que la sexta devuelve `503`, `Retry-After` y `X-Resilience-Circuit: open`. Después se
+selecciona `NORMAL`, se esperan 31 segundos y una nueva llamada realiza la prueba Half-Open. Una
+respuesta exitosa devuelve el circuito a `closed`.
+
+Al terminar la evidencia se debe establecer `RESILIENCE_DEMO_ENABLED=0`. Esta capacidad no
+modifica datos, no procesa pagos y no debe habilitarse en el servicio principal.
+
 ## Mantenimiento y configuración
 
 Los valores se mantienen como parámetros predeterminados en `ResiliencePolicy` (máximo de intentos, backoff, umbral y espera del circuito); se pueden ajustar allí junto con sus pruebas. Los cambios de configuración del rate limiter se realizan con `RATELIMIT_STORAGE_URI` y los límites declarados en `app.py`. No se deben aumentar reintentos de operaciones con efectos secundarios sin una clave de idempotencia admitida por el proveedor.

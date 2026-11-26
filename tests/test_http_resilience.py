@@ -108,6 +108,18 @@ class HTTPResilienceTests(unittest.TestCase):
             policy.request("GET", "https://photon.example/api", probe).status_code, 200,
         )
 
+    def test_snapshot_and_targeted_reset_do_not_affect_other_services(self):
+        policy = ResiliencePolicy(max_attempts=1, failure_threshold=1, sleep=Mock())
+        policy.request("GET", "https://one.example/api", Mock(return_value=self.respuesta(503)))
+        policy.request("GET", "https://two.example/api", Mock(return_value=self.respuesta(503)))
+
+        self.assertEqual(policy.snapshot("one.example")["state"], "open")
+        self.assertEqual(policy.snapshot("one.example")["failures"], 1)
+        policy.reset("one.example")
+
+        self.assertEqual(policy.snapshot("one.example")["state"], "closed")
+        self.assertEqual(policy.snapshot("two.example")["state"], "open")
+
 
 if __name__ == "__main__":
     unittest.main()

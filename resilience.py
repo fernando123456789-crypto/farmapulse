@@ -167,7 +167,35 @@ class ResiliencePolicy:
                 circuit["generation"] += 1
                 logger.warning("circuit_breaker servicio=%s estado=open", service)
 
-    def reset(self):
-        """Limpia el estado de los circuitos; útil al aislar pruebas."""
+    def snapshot(self, service):
+        """Devuelve una copia segura del estado de un circuito."""
+        now = self._clock()
         with self._lock:
-            self._circuits.clear()
+            circuit = self._circuits.get(service)
+            if circuit is None:
+                return {
+                    "service": service,
+                    "state": "closed",
+                    "failures": 0,
+                    "probe_in_flight": False,
+                    "retry_after": 0,
+                }
+            retry_after = 0
+            if circuit["state"] == "open":
+                remaining = self.reset_timeout - (now - circuit["opened_at"])
+                retry_after = max(0, int(remaining + 0.999))
+            return {
+                "service": service,
+                "state": circuit["state"],
+                "failures": circuit["failures"],
+                "probe_in_flight": circuit["probe_in_flight"],
+                "retry_after": retry_after,
+            }
+
+    def reset(self, service=None):
+        """Limpia uno o todos los circuitos; útil al aislar pruebas."""
+        with self._lock:
+            if service is None:
+                self._circuits.clear()
+            else:
+                self._circuits.pop(service, None)

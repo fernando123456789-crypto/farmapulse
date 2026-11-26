@@ -23,6 +23,9 @@ class SecurityApiTests(CheckoutIdentityFixture, unittest.TestCase):
         self.addCleanup(self.module.limiter.reset)
         self.payment.return_value.status_code = 200
         self.payment.return_value.json.return_value = {}
+        self.module._resilience_demo_policy.reset(self.module._RESILIENCE_DEMO_SERVICE)
+        with self.module._RESILIENCE_DEMO_LOCK:
+            self.module._RESILIENCE_DEMO_STATE.update(mode="NORMAL", provider_calls=0)
 
     def test_five_logins_per_account_even_when_ip_changes(self):
         with patch.object(self.module.limiter, 'enabled', True):
@@ -99,6 +102,42 @@ class SecurityApiTests(CheckoutIdentityFixture, unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertEqual(response.headers['Retry-After'], '4')
         self.assertEqual(response.headers['X-Resilience-Circuit'], 'open')
+
+    def test_resilience_demo_is_hidden_when_disabled(self):
+        with patch.dict('os.environ', {"RESILIENCE_DEMO_ENABLED": "0"}):
+            response = self.client.get('/api/resilience/demo/estado')
+        self.assertEqual(response.status_code, 404)
+
+    def test_resilience_demo_opens_blocks_and_recovers(self):
+        env = {
+            "RESILIENCE_DEMO_ENABLED": "1",
+            "RESILIENCE_DEMO_KEY": "test-demo-key-long-enough",
+        }
+        headers = {"X-Resilience-Demo-Key": env["RESILIENCE_DEMO_KEY"]}
+        with patch.dict('os.environ', env):
+            self.assertEqual(self.client.post('/api/resilience/demo/reset', headers=headers).status_code, 200)
+            self.assertEqual(self.client.put('/api/resilience/demo/modo', headers=headers,
+                                             json={"modo": "FALLA"}).status_code, 200)
+            for _ in range(5):
+                self.assertEqual(self.client.post('/api/resilience/demo/llamada', headers=headers).status_code, 502)
+
+            blocked = self.client.post('/api/resilience/demo/llamada', headers=headers)
+            self.assertEqual(blocked.status_code, 503)
+            self.assertEqual(blocked.headers['X-Resilience-Circuit'], 'open')
+            self.assertGreater(int(blocked.headers['Retry-After']), 0)
+            opened = self.client.get('/api/resilience/demo/estado', headers=headers).json
+            self.assertEqual(opened['state'], 'open')
+            self.assertEqual(opened['provider_calls'], 5)
+
+            self.assertEqual(self.client.put('/api/resilience/demo/modo', headers=headers,
+                                             json={"modo": "NORMAL"}).status_code, 200)
+            self.module._resilience_demo_policy.reset_timeout = 0
+            self.addCleanup(setattr, self.module._resilience_demo_policy, 'reset_timeout', 30)
+            recovered = self.client.post('/api/resilience/demo/llamada', headers=headers)
+            self.assertEqual(recovered.status_code, 200)
+            final = self.client.get('/api/resilience/demo/estado', headers=headers).json
+            self.assertEqual(final['state'], 'closed')
+            self.assertEqual(final['provider_calls'], 6)
 
     def test_unconfirmed_anonymous_and_invalid_users_are_rejected(self):
         for user in ({}, {'id': 'buyer', 'email': 'b@example.com'},
